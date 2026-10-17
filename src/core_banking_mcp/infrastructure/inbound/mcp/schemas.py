@@ -57,3 +57,37 @@ class BuscarClienteOut(BaseModel):
     refinement_required: bool = Field(
         description="True solo si hubo más de 5 coincidencias (customers vacía)."
     )
+
+
+class VerificarIdentidadIn(BaseModel):
+    """Entrada de `verificar_identidad`."""
+
+    conversation_id: str = Field(description="Identificador de correlación; no vacío.")
+    customer_id: str = Field(
+        description="customer_id devuelto por buscar_cliente; 1-32 caracteres tras recortar."
+    )
+    birth_date: str = Field(
+        description="Fecha de nacimiento AAAA-MM-DD; existente y no posterior a hoy."
+    )
+    document_issue_date: str = Field(
+        description=(
+            "Fecha de expedición del documento AAAA-MM-DD; existente, no posterior a hoy "
+            "y no anterior a birth_date."
+        )
+    )
+
+
+class VerificarIdentidadOut(BaseModel):
+    """Salida de `verificar_identidad`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    verified: bool = Field(
+        description="True si la conversación queda (o ya estaba) verificada para ese customer_id."
+    )
+    attempts_remaining: int = Field(
+        ge=0, le=3, description="Intentos que le quedan a la conversación (3 - fallos acumulados)."
+    )
+    escalation_required: bool = Field(
+        description="True si la conversación está bloqueada y debe derivarse a un analista."
+    )

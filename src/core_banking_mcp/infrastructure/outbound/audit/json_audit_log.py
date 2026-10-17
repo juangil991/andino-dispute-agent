@@ -18,5 +18,8 @@ class JsonAuditLog:
         payload = asdict(event)
         payload["timestamp"] = event.timestamp.isoformat()
         payload["customer_ids"] = list(event.customer_ids)
+        for key in ("customer_id", "intento"):
+            if payload[key] is None:
+                del payload[key]
         self._stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self._stream.flush()

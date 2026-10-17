@@ -19,13 +19,15 @@ class AuditEvent:
     conversation_id: str | None
     timestamp: datetime
     tool: str
-    input: AuditInput
+    input: AuditInput | None
     outcome: str
     count: int | None
     customer_ids: tuple[str, ...]
     error_code: str | None
     rule: str | None
     reason: str | None
+    customer_id: str | None = None
+    intento: int | None = None
 
 
 class AuditLogPort(Protocol):

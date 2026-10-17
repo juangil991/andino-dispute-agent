@@ -6,7 +6,9 @@ from mcp.server.fastmcp import FastMCP
 from sqlalchemy.engine import make_url
 
 from core_banking_mcp.application.use_cases.search_customers import SearchCustomers
+from core_banking_mcp.application.use_cases.verify_identity import VerifyIdentity
 from core_banking_mcp.config import CoreSettings
+from core_banking_mcp.infrastructure.inbound.mcp.identity_tools import register_identity_tools
 from core_banking_mcp.infrastructure.inbound.mcp.tools import register_tools
 from core_banking_mcp.infrastructure.outbound.audit.json_audit_log import JsonAuditLog
 from core_banking_mcp.infrastructure.outbound.clock.system_clock import SystemClock
@@ -19,6 +21,11 @@ from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
 )
+from core_banking_mcp.infrastructure.outbound.verification.in_memory_verification_store import (
+    InMemoryConversationVerificationStore,
+)
+
+_mcp: FastMCP | None = None
 
 
 def _ensure_sqlite_directory(database_url: str) -> None:
@@ -38,9 +45,22 @@ def build_server(settings: CoreSettings | None = None) -> FastMCP:
     if settings.seed_on_start:
         seed_database(repository)
     search_customers = SearchCustomers(repository, JsonAuditLog(), SystemClock())
+    store = InMemoryConversationVerificationStore()
+    verify_identity = VerifyIdentity(repository, store, JsonAuditLog(), SystemClock())
     mcp = FastMCP("core_banking_mcp")
     register_tools(mcp, search_customers)
+    register_identity_tools(mcp, verify_identity)
     return mcp
+
+
+def __getattr__(name: str) -> FastMCP:
+    """Atributo perezoso `mcp`: construye el servidor una sola vez al primer acceso."""
+    global _mcp
+    if name != "mcp":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    if _mcp is None:
+        _mcp = build_server()
+    return _mcp
 
 
 def main() -> None:

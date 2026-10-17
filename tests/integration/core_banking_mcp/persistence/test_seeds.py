@@ -1,5 +1,7 @@
 """Semillas ficticias de core_banking_mcp (plan §4; habilita AC-001-01 en el smoke test)."""
 
+from datetime import date
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -57,3 +59,22 @@ def test_seed_database_is_idempotent_and_reproducible() -> None:
 
     ana = repo.find_matching(SearchCriteria.create(None, "ana torres", None), 6)
     assert [c.customer_id for c in ana] == ["C-0003", "C-0004"]
+
+
+# Regla: RN-002-01 - cada semilla tiene fecha de nacimiento y de emisión.
+# AC-002-01 · Art. 1 (datos ficticios)
+def test_ac_002_01_seeded_customers_have_registered_dates() -> None:
+    """AC-002-01: las 7 semillas tienen identidad y C-0001/C-0002 las fechas de la spec."""
+    session = _new_session()
+    repo = SqlAlchemyCustomerRepository(session)
+
+    seed_database(repo)
+
+    for i in range(1, 8):
+        assert repo.find_identity(f"C-000{i}") is not None
+    first = repo.find_identity("C-0001")
+    second = repo.find_identity("C-0002")
+    assert first is not None
+    assert (first.birth_date, first.document_issue_date) == (date(1990, 3, 15), date(2008, 4, 20))
+    assert second is not None
+    assert (second.birth_date, second.document_issue_date) == (date(1985, 7, 2), date(2003, 8, 10))
