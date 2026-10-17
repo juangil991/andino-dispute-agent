@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 
-from sqlalchemy import ColumnElement, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from core_banking_mcp.domain.models.customer import Card, CardStatus, Customer
@@ -34,6 +34,7 @@ class SqlAlchemyCustomerRepository:
         una clave, se guarda un PAN sintético "000000000000" + last4.
         """
         pans = pans or {}
+        stored_cards = self._session.scalar(select(func.count()).select_from(CardRow)) or 0
         row = CustomerRow(
             customer_id=customer.customer_id,
             full_name=customer.full_name,
@@ -47,8 +48,9 @@ class SqlAlchemyCustomerRepository:
                     pan=pans.get(card.last4, _SYNTHETIC_PAN_PREFIX + card.last4),
                     last4=card.last4,
                     status=card.status.value,
+                    card_ref=f"CARD-{stored_cards + position:04d}",
                 )
-                for card in customer.cards
+                for position, card in enumerate(customer.cards, start=1)
             ],
         )
         self._session.add(row)

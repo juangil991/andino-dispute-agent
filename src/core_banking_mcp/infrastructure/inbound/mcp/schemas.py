@@ -1,14 +1,17 @@
-"""Esquemas MCP de `buscar_cliente` y sobre de error (spec 001 §7, mcp-tools.md)."""
+"""Esquemas MCP de las herramientas y sobre de error (specs 001-003 §7, mcp-tools.md)."""
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ErrorCode(StrEnum):
-    """Catálogo cerrado de códigos de error de `buscar_cliente`."""
+    """Catálogo cerrado de códigos de error de las herramientas MCP."""
 
     INVALID_INPUT = "INVALID_INPUT"
+    IDENTITY_NOT_VERIFIED = "IDENTITY_NOT_VERIFIED"
+    NOT_FOUND = "NOT_FOUND"
     INTERNAL = "INTERNAL"
 
 
@@ -90,4 +93,62 @@ class VerificarIdentidadOut(BaseModel):
     )
     escalation_required: bool = Field(
         description="True si la conversación está bloqueada y debe derivarse a un analista."
+    )
+
+
+class ConsultarTransaccionesIn(BaseModel):
+    """Entrada de `consultar_transacciones`."""
+
+    conversation_id: str = Field(description="Identificador de correlación; no vacío.")
+    card_last4: str = Field(
+        description="Últimos 4 dígitos de la tarjeta (exactamente 4 dígitos 0-9)."
+    )
+    date_from: str = Field(
+        description="Fecha inicial AAAA-MM-DD, incluida; existente y no posterior a date_to."
+    )
+    date_to: str = Field(
+        description=(
+            "Fecha final AAAA-MM-DD, incluida; existente, no posterior a hoy (Bogotá) "
+            "y a lo sumo 89 días después de date_from."
+        )
+    )
+
+
+class TransactionItemOut(BaseModel):
+    """Transacción de una tarjeta del cliente verificado."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: str = Field(description="Identificador opaco de la transacción en el core.")
+    occurred_at: str = Field(
+        description="Fecha y hora ISO 8601 con zona (p. ej. 2026-09-20T14:32:00-05:00)."
+    )
+    merchant: str = Field(description="Nombre del comercio.")
+    amount: str = Field(
+        description='Monto original, positivo, con exactamente 2 decimales (p. ej. "125000.00").'
+    )
+    currency: str = Field(description="Código ISO 4217 de 3 letras (p. ej. COP, USD).")
+    status: Literal["CONFIRMED", "PENDING", "REVERSED"] = Field(
+        description="Estado de la transacción: CONFIRMED, PENDING o REVERSED."
+    )
+    card_id: str = Field(
+        description="Identificador opaco de la tarjeta en el core; distingue tarjetas homónimas."
+    )
+    masked_card: str = Field(description="Tarjeta enmascarada: '**** ' y sus 4 últimos dígitos.")
+
+
+class ConsultarTransaccionesOut(BaseModel):
+    """Salida de `consultar_transacciones`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transactions: list[TransactionItemOut] = Field(
+        max_length=50,
+        description=(
+            "0 a 50 transacciones, de la más reciente a la más antigua; vacía si no hay "
+            "en el rango o si hay más de 50."
+        ),
+    )
+    refinement_required: bool = Field(
+        description="True solo si hubo más de 50 transacciones en el rango (lista vacía)."
     )

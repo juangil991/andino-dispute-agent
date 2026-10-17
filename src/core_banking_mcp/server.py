@@ -5,11 +5,15 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy.engine import make_url
 
+from core_banking_mcp.application.use_cases.list_card_transactions import ListCardTransactions
 from core_banking_mcp.application.use_cases.search_customers import SearchCustomers
 from core_banking_mcp.application.use_cases.verify_identity import VerifyIdentity
 from core_banking_mcp.config import CoreSettings
 from core_banking_mcp.infrastructure.inbound.mcp.identity_tools import register_identity_tools
 from core_banking_mcp.infrastructure.inbound.mcp.tools import register_tools
+from core_banking_mcp.infrastructure.inbound.mcp.transaction_tools import (
+    register_transaction_tools,
+)
 from core_banking_mcp.infrastructure.outbound.audit.json_audit_log import JsonAuditLog
 from core_banking_mcp.infrastructure.outbound.clock.system_clock import SystemClock
 from core_banking_mcp.infrastructure.outbound.persistence.database import (
@@ -20,6 +24,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.database import (
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import seed_database
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
+    SqlAlchemyTransactionRepository,
 )
 from core_banking_mcp.infrastructure.outbound.verification.in_memory_verification_store import (
     InMemoryConversationVerificationStore,
@@ -43,13 +50,17 @@ def build_server(settings: CoreSettings | None = None) -> FastMCP:
     session = session_factory(engine)()
     repository = SqlAlchemyCustomerRepository(session)
     if settings.seed_on_start:
-        seed_database(repository)
+        seed_database(repository, SqlAlchemyTransactionRepository(session))
     search_customers = SearchCustomers(repository, JsonAuditLog(), SystemClock())
     store = InMemoryConversationVerificationStore()
     verify_identity = VerifyIdentity(repository, store, JsonAuditLog(), SystemClock())
+    list_card_transactions = ListCardTransactions(
+        SqlAlchemyTransactionRepository(session), store, JsonAuditLog(), SystemClock()
+    )
     mcp = FastMCP("core_banking_mcp")
     register_tools(mcp, search_customers)
     register_identity_tools(mcp, verify_identity)
+    register_transaction_tools(mcp, list_card_transactions)
     return mcp
 
 

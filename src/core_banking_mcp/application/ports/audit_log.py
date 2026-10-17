@@ -28,6 +28,10 @@ class AuditEvent:
     reason: str | None
     customer_id: str | None = None
     intento: int | None = None
+    masked_card: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    transaction_ids: tuple[str, ...] = ()
 
 
 class AuditLogPort(Protocol):

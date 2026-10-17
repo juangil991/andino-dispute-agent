@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 from datetime import date
 
+from core_banking_mcp.domain.dates import parse_iso_date
 from core_banking_mcp.domain.errors import InvalidInputError
 
 MAX_FAILED_ATTEMPTS = 3
 MAX_ID_LENGTH = 32
-
-_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def _clean_id(field: str, value: str | None) -> str:
@@ -22,12 +20,7 @@ def _clean_id(field: str, value: str | None) -> str:
 
 
 def _parse_date(field: str, value: str | None, today: date) -> date:
-    if value is None or _ISO_DATE.fullmatch(value) is None:
-        raise InvalidInputError(field, "debe tener formato AAAA-MM-DD")
-    try:
-        parsed = date(int(value[0:4]), int(value[5:7]), int(value[8:10]))
-    except ValueError:
-        raise InvalidInputError(field, "no es una fecha existente en el calendario") from None
+    parsed = parse_iso_date(field, value)
     if parsed > today:
         raise InvalidInputError(field, "no puede ser posterior a hoy")
     return parsed

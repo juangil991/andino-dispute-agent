@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core_banking_mcp.domain.models.search import SearchCriteria
+from core_banking_mcp.domain.models.transaction import BogotaDateRange
 from core_banking_mcp.infrastructure.outbound.persistence.database import (
     create_engine_from_url,
     create_schema,
@@ -14,6 +15,7 @@ from core_banking_mcp.infrastructure.outbound.persistence.database import (
 from core_banking_mcp.infrastructure.outbound.persistence.models.tables import (
     CardRow,
     CustomerRow,
+    TransactionRow,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import (
     SEED_CUSTOMERS,
@@ -21,6 +23,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
+    SqlAlchemyTransactionRepository,
 )
 
 
@@ -37,8 +42,8 @@ def test_seed_database_is_idempotent_and_reproducible() -> None:
     session = _new_session()
     repo = SqlAlchemyCustomerRepository(session)
 
-    seed_database(repo)
-    seed_database(repo)
+    seed_database(repo, SqlAlchemyTransactionRepository(session))
+    seed_database(repo, SqlAlchemyTransactionRepository(session))
 
     assert len(SEED_CUSTOMERS) == 7
     assert session.scalar(select(func.count()).select_from(CustomerRow)) == 7
@@ -68,7 +73,7 @@ def test_ac_002_01_seeded_customers_have_registered_dates() -> None:
     session = _new_session()
     repo = SqlAlchemyCustomerRepository(session)
 
-    seed_database(repo)
+    seed_database(repo, SqlAlchemyTransactionRepository(session))
 
     for i in range(1, 8):
         assert repo.find_identity(f"C-000{i}") is not None
@@ -78,3 +83,31 @@ def test_ac_002_01_seeded_customers_have_registered_dates() -> None:
     assert (first.birth_date, first.document_issue_date) == (date(1990, 3, 15), date(2008, 4, 20))
     assert second is not None
     assert (second.birth_date, second.document_issue_date) == (date(1985, 7, 2), date(2003, 8, 10))
+
+
+# Soporte de tests: semillas ficticias reproducibles · Art. 1
+# Invariante: Art. 1 — datos semilla ficticios y reproducibles (se siembran una sola vez).
+# AC-003-01 · Art. 1
+def test_seed_database_seeds_transactions_once() -> None:
+    """Soporte: las 9 transacciones del plan §4 se siembran una sola vez, con sus card_ref."""
+    session = _new_session()
+    customers = SqlAlchemyCustomerRepository(session)
+    transactions = SqlAlchemyTransactionRepository(session)
+
+    seed_database(customers, transactions)
+    seed_database(customers, transactions)
+
+    assert session.scalar(select(func.count()).select_from(TransactionRow)) == 9
+    refs = {
+        row.card_ref: row.last4
+        for row in session.scalars(select(CardRow).order_by(CardRow.card_ref))
+    }
+    assert refs == {
+        "CARD-0001": "4321",
+        "CARD-0002": "8765",
+        "CARD-0003": "1234",
+        "CARD-0004": "5555",
+    }
+    start, end = BogotaDateRange(date(2026, 9, 1), date(2026, 9, 30)).utc_bounds()
+    found = transactions.find_transactions(["CARD-0001"], start, end, 50)
+    assert [t.transaction_id for t in found] == ["TX-000004", "TX-000003", "TX-000002", "TX-000001"]
