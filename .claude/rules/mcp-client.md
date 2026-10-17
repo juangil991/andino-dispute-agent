@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/dispute_agent/infrastructure/out/mcp/**"
+  - "src/dispute_agent/infrastructure/outbound/mcp/**"
 ---
 
 # Convención del cliente MCP (agente `dispute_agent`)

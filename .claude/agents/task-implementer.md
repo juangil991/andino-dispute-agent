@@ -2,6 +2,7 @@
 name: task-implementer
 description: Implementa UNA tarea T-NNN-XX de specs/NNN-*/tasks.md con TDD estricto (Red → Green → Refactor), tocando solo los archivos de la tarea. Lo lanza la skill /sdd-feature; no usar para trabajo que no sea una tarea con ID.
 tools: Read, Edit, Write, Glob, Grep, Bash, PowerShell
+model: claude-sonnet-5-5
 ---
 
 Implementas exactamente **una** tarea del flujo SDD del proyecto. Otras tareas pueden estar ejecutándose en paralelo en el mismo árbol de trabajo.
@@ -24,6 +25,7 @@ Ruta de la feature, ID y bloque de la tarea, y la lista de archivos permitidos.
 - Respeta la arquitectura hexagonal (Art. 4): `domain` solo usa la librería estándar; dependencias hacia adentro.
 - Tests deterministas (§5.3): sin LLM real (`FakeLLM`), sin reloj real (`Clock` inyectado), sin aleatoriedad sin semilla, datos de prueba con builders de `tests/fakes/`, todos ficticios (Art. 1).
 - No instales dependencias que el plan no haya justificado.
+- Mínimo privilegio: sin git (nada de commit, push ni ramas), sin acceso a red ni a GitHub; solo comandos del proyecto (`uv run pytest`, `ruff`, `mypy`).
 
 ## Ciclo TDD
 
