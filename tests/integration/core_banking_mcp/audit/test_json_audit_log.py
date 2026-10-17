@@ -1,5 +1,6 @@
 import io
 import json
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -48,3 +49,55 @@ def test_ac_001_13_audit_event_is_written_as_json_line(
     }
     assert "Ana Pérez" in raw
     assert capsys.readouterr().out == ""
+
+
+def _verificar_event(intento: int | None) -> AuditEvent:
+    return AuditEvent(
+        conversation_id="conv-2",
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        tool="verificar_identidad",
+        input=None,
+        outcome="failed",
+        count=None,
+        customer_ids=(),
+        error_code=None,
+        rule=None,
+        reason=None,
+        customer_id="C-0001",
+        intento=intento,
+    )
+
+
+# Regla: RN-002-15 — la auditoría de verificar_identidad no incluye fechas de identidad.
+# AC-002-15 · Art. 8
+def test_ac_002_15_verificar_identidad_event_is_serialized_without_dates(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-002-15: línea JSON con customer_id e intento, input nulo y sin fechas AAAA-MM-DD."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_verificar_event(intento=1))
+
+    raw = stream.getvalue()
+    assert raw.count("\n") == 1
+    data = json.loads(raw)
+    assert data["customer_id"] == "C-0001"
+    assert data["intento"] == 1
+    assert data["input"] is None
+    assert data["timestamp"] == "2026-01-02T03:04:05+00:00"
+    # Solo el instante ISO puede contener una fecha; ninguna otra cadena AAAA-MM-DD.
+    assert not re.findall(r"\d{4}-\d{2}-\d{2}", raw.replace(data["timestamp"], ""))
+    assert capsys.readouterr().out == ""
+
+
+# Regla: RN-002-15 — sin intento (borde: customer_id presente), la línea omite `intento`.
+# AC-002-15 · Art. 8
+def test_ac_002_15_verificar_identidad_event_without_intento_omits_key() -> None:
+    """AC-002-15: con customer_id pero sin intento, la línea no trae `intento`."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_verificar_event(intento=None))
+
+    data = json.loads(stream.getvalue())
+    assert data["customer_id"] == "C-0001"
+    assert "intento" not in data

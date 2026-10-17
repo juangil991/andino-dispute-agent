@@ -8,10 +8,9 @@ validaría también los resultados de error contra ese esquema, así que se regi
 (sobre `{code, message, retryable}` de `tool_error`).
 """
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
 from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
@@ -23,7 +22,10 @@ from core_banking_mcp.application.use_cases.search_customers import (
 from core_banking_mcp.domain.errors import InvalidInputError
 from core_banking_mcp.domain.masking import mask_card, mask_document
 from core_banking_mcp.domain.models.customer import Customer
-from core_banking_mcp.infrastructure.inbound.mcp.errors import tool_error
+from core_banking_mcp.infrastructure.inbound.mcp.errors import (
+    ErrorPassthroughMetadata,
+    tool_error,
+)
 from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
     BuscarClienteOut,
     CustomerMatchOut,
@@ -31,15 +33,6 @@ from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
 )
 
 TOOL_NAME = "buscar_cliente"
-
-
-class _ErrorPassthroughMetadata(FuncMetadata):
-    """Valida el éxito contra `BuscarClienteOut` pero no los resultados `isError=True`."""
-
-    def convert_result(self, result: Any) -> Any:
-        if isinstance(result, CallToolResult) and result.isError:
-            return result
-        return super().convert_result(result)
 
 
 def _to_match(customer: Customer) -> CustomerMatchOut:
@@ -132,4 +125,4 @@ def register_tools(mcp: FastMCP, search_customers: SearchCustomers) -> None:
 
     registered = mcp._tool_manager.get_tool(TOOL_NAME)
     assert registered is not None
-    registered.fn_metadata = _ErrorPassthroughMetadata(**dict(registered.fn_metadata))
+    registered.fn_metadata = ErrorPassthroughMetadata(**dict(registered.fn_metadata))

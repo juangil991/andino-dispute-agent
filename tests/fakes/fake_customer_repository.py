@@ -1,15 +1,24 @@
 """Repositorio en memoria que filtra con las funciones de normalización."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from core_banking_mcp.domain.models.customer import Customer
+from core_banking_mcp.domain.models.identity import IdentityRecord
 from core_banking_mcp.domain.models.search import SearchCriteria
 from core_banking_mcp.domain.normalization import normalize_document, normalize_name
 
 
 class FakeCustomerRepository:
-    def __init__(self, customers: Iterable[Customer] = ()) -> None:
+    def __init__(
+        self,
+        customers: Iterable[Customer] = (),
+        identities: Mapping[str, IdentityRecord] | None = None,
+    ) -> None:
         self._customers = list(customers)
+        self._identities = dict(identities or {})
+
+    def find_identity(self, customer_id: str) -> IdentityRecord | None:
+        return self._identities.get(customer_id)
 
     def find_matching(self, criteria: SearchCriteria, limit: int) -> list[Customer]:
         matches = [c for c in self._customers if self._matches(c, criteria)]

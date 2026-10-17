@@ -1,6 +1,8 @@
 """Tablas SQLAlchemy del core bancario (plan §4). No cruzan al dominio (§3.2.4)."""
 
-from sqlalchemy import ForeignKey, String
+from datetime import date
+
+from sqlalchemy import Date, ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -16,6 +18,8 @@ class CustomerRow(Base):
     full_name_normalized: Mapped[str] = mapped_column(String, index=True)
     document: Mapped[str] = mapped_column(String, unique=True)
     document_normalized: Mapped[str] = mapped_column(String, index=True, unique=True)
+    birth_date: Mapped[date] = mapped_column(Date)
+    document_issue_date: Mapped[date] = mapped_column(Date)
 
     cards: Mapped[list["CardRow"]] = relationship(
         back_populates="customer", cascade="all, delete-orphan", order_by="CardRow.card_id"

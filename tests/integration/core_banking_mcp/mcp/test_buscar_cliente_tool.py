@@ -13,6 +13,7 @@ from tests.fakes.customer_builder import CustomerBuilder
 from tests.fakes.failing_customer_repository import FailingCustomerRepository
 from tests.fakes.fake_audit_log import FakeAuditLog
 from tests.fakes.fixed_clock import FixedClock
+from tests.fakes.identity_builder import IdentityBuilder
 
 from core_banking_mcp.application.use_cases.search_customers import (
     SearchCustomers,
@@ -43,7 +44,7 @@ async def _client(
         create_schema(engine)
         repo = SqlAlchemyCustomerRepository(session_factory(engine)())
         for customer in customers:
-            repo.add(customer, _PANS)
+            repo.add(customer, _PANS, identity=IdentityBuilder().build())
         use_case = SearchCustomers(repo, FakeAuditLog(), FixedClock())
     mcp = FastMCP("core-banking-test")
     register_tools(mcp, use_case)
