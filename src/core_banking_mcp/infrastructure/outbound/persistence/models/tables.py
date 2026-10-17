@@ -1,8 +1,8 @@
 """Tablas SQLAlchemy del core bancario (plan §4). No cruzan al dominio (§3.2.4)."""
 
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import Date, ForeignKey, String
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -34,5 +34,19 @@ class CardRow(Base):
     pan: Mapped[str] = mapped_column(String)  # PAN ficticio (Art. 1)
     last4: Mapped[str] = mapped_column(String(4), index=True)
     status: Mapped[str] = mapped_column(String)
+    card_ref: Mapped[str] = mapped_column(String, unique=True, index=True)  # card_id opaco
 
     customer: Mapped[CustomerRow] = relationship(back_populates="cards")
+
+
+class TransactionRow(Base):
+    __tablename__ = "transactions"
+    __table_args__ = (Index("ix_transactions_card_id_occurred_at", "card_id", "occurred_at"),)
+
+    transaction_id: Mapped[str] = mapped_column(String, primary_key=True)
+    card_id: Mapped[int] = mapped_column(ForeignKey("cards.card_id"), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)  # UTC sin zona
+    merchant: Mapped[str] = mapped_column(String)
+    amount_minor: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3))
+    status: Mapped[str] = mapped_column(String)

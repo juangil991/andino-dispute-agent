@@ -20,7 +20,7 @@ def test_ac_002_01_server_mcp_attribute_is_lazy_and_exposes_both_tools(
     assert isinstance(first, FastMCP)
     assert server.mcp is first  # type: ignore[attr-defined]
     names = sorted(tool.name for tool in first._tool_manager.list_tools())
-    assert names == ["buscar_cliente", "verificar_identidad"]
+    assert names == ["buscar_cliente", "consultar_transacciones", "verificar_identidad"]
 
     with pytest.raises(AttributeError):
         server.otro_nombre  # noqa: B018  # type: ignore[attr-defined]

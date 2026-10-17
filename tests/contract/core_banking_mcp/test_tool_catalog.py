@@ -7,6 +7,7 @@ from mcp.types import Tool
 from core_banking_mcp.config import CoreSettings
 from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
     BuscarClienteOut,
+    ConsultarTransaccionesOut,
     VerificarIdentidadOut,
 )
 from core_banking_mcp.server import build_server
@@ -28,9 +29,9 @@ def _list_tools() -> list[Tool]:
 # AC-002-01 · Art. 7 (mínima exposición)
 def test_ac_002_01_catalog_exposes_buscar_cliente_and_verificar_identidad() -> None:
     """AC-002-01: list_tools devuelve solo buscar_cliente y verificar_identidad con sus esquemas."""
-    tools = _list_tools()
-    assert [t.name for t in tools] == ["buscar_cliente", "verificar_identidad"]
-    buscar, verificar = tools
+    tools = {t.name: t for t in _list_tools()}
+    assert sorted(tools) == ["buscar_cliente", "consultar_transacciones", "verificar_identidad"]
+    buscar, verificar = tools["buscar_cliente"], tools["verificar_identidad"]
 
     assert set(buscar.inputSchema["properties"]) == {
         "conversation_id",
@@ -59,3 +60,27 @@ def test_ac_002_01_catalog_exposes_buscar_cliente_and_verificar_identidad() -> N
     expected_out = VerificarIdentidadOut.model_json_schema()
     assert verificar.outputSchema["properties"] == expected_out["properties"]
     assert verificar.outputSchema["additionalProperties"] is False
+
+
+# Regla: RN-003-12 — cada transacción devuelta contiene solo: `transaction_id`, `occurred_at`,
+#   `merchant`, `amount`, `currency`, `status`, `card_id` y `masked_card` (parte de RN-003-12 que
+#   verifica este snapshot: los campos del esquema de salida, sin campos extra); el catálogo
+#   expone solo las herramientas declaradas en spec §7.
+# AC-003-14 · Art. 7 (mínima exposición)
+def test_ac_003_14_catalog_exposes_consultar_transacciones_with_spec_schemas() -> None:
+    """AC-003-14: list_tools incluye consultar_transacciones con esquemas de la spec 003 §7."""
+    tools = {t.name: t for t in _list_tools()}
+    assert sorted(tools) == ["buscar_cliente", "consultar_transacciones", "verificar_identidad"]
+    consultar = tools["consultar_transacciones"]
+
+    properties = consultar.inputSchema["properties"]
+    assert set(properties) == {"conversation_id", "card_last4", "date_from", "date_to"}
+    assert not consultar.inputSchema.get("required")
+    assert all(properties[name].get("description") for name in properties)
+    assert "bligatorio" in properties["conversation_id"]["description"]
+
+    assert consultar.outputSchema is not None
+    expected = ConsultarTransaccionesOut.model_json_schema()
+    assert consultar.outputSchema["properties"] == expected["properties"]
+    assert consultar.outputSchema["additionalProperties"] is False
+    assert consultar.outputSchema["$defs"]["TransactionItemOut"]["additionalProperties"] is False

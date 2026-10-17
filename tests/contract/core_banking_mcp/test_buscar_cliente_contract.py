@@ -42,7 +42,12 @@ def test_ac_001_09_error_envelope_matches_spec() -> None:
     """AC-001-09: ToolErrorOut tiene code/message/retryable y ErrorCode es cerrado."""
     schema = ToolErrorOut.model_json_schema()
     assert set(schema["properties"]) == {"code", "message", "retryable"}
-    assert {c.value for c in ErrorCode} == {"INVALID_INPUT", "INTERNAL"}
+    assert {c.value for c in ErrorCode} == {
+        "INVALID_INPUT",
+        "IDENTITY_NOT_VERIFIED",
+        "NOT_FOUND",
+        "INTERNAL",
+    }
 
 
 # Regla: RN-001-05 — el error viaja con isError y el mismo JSON en structuredContent y texto.

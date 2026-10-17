@@ -3,7 +3,8 @@
 from datetime import date
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import inspect, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from tests.fakes.customer_builder import CustomerBuilder
 from tests.fakes.identity_builder import IdentityBuilder
@@ -244,6 +245,81 @@ def test_ac_002_04_find_identity_unknown_customer_returns_none(
     repo.add(CustomerBuilder().with_id("C-001").build(), identity=IdentityBuilder().build())
 
     assert repo.find_identity("C-999") is None
+
+
+# Regla: RN-003-03 — Se consultan **todas** las tarjetas del cliente verificado en la conversación que terminan en `card_last4`, **sea cual sea su estado** (activa, bloqueada, cancelada); sus transacciones se devuelven juntas en una sola lista.  # noqa: E501
+# Regla: RN-003-12 — Cada transacción devuelta contiene **solo**: `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`, `status`, `card_id` (identificador opaco de la tarjeta en el core, no derivado de su número) y `masked_card`.  # noqa: E501
+# AC-003-05 · Art. 3
+def test_ac_003_05_add_assigns_distinct_card_refs_to_same_last4_cards(
+    repo: SqlAlchemyCustomerRepository, session: Session
+) -> None:
+    """AC-003-05: dos tarjetas con el mismo last4 reciben card_ref distintos y consecutivos."""
+    repo.add(
+        CustomerBuilder()
+        .with_id("C-0001")
+        .with_document("D-3001")
+        .with_cards(Card("4321", CardStatus.ACTIVE), Card("4321", CardStatus.BLOCKED))
+        .build(),
+        identity=IdentityBuilder().build(),
+    )
+    repo.add(
+        CustomerBuilder()
+        .with_id("C-0002")
+        .with_document("D-3002")
+        .with_cards(Card("1234", CardStatus.ACTIVE))
+        .build(),
+        identity=IdentityBuilder().build(),
+    )
+
+    cards = session.scalars(select(CardRow).order_by(CardRow.card_id)).all()
+
+    assert [c.card_ref for c in cards] == ["CARD-0001", "CARD-0002", "CARD-0003"]
+    assert [c.last4 for c in cards] == ["4321", "4321", "1234"]
+
+
+# Soporte de tests: la columna card_ref es única a nivel de base de datos · Art. 3
+def test_card_ref_column_is_unique(session: Session) -> None:
+    """Soporte: insertar dos tarjetas con el mismo card_ref viola la unicidad."""
+    session.add(
+        CustomerRow(
+            customer_id="C-1",
+            full_name="A",
+            full_name_normalized="a",
+            document="D-1",
+            document_normalized="d-1",
+            birth_date=date(1990, 1, 1),
+            document_issue_date=date(2010, 1, 1),
+            cards=[
+                CardRow(pan="1", last4="1111", status="ACTIVE", card_ref="CARD-0001"),
+                CardRow(pan="2", last4="2222", status="ACTIVE", card_ref="CARD-0001"),
+            ],
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+# Soporte de tests: create_schema crea la tabla transactions del plan §4 · Art. 3
+def test_create_schema_creates_transactions_table_with_plan_columns() -> None:
+    """Soporte: la tabla transactions tiene las columnas e índice del plan §4."""
+    engine = create_engine_from_url("sqlite:///:memory:")
+    create_schema(engine)
+
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("transactions")}
+    index_columns = [tuple(i["column_names"]) for i in inspector.get_indexes("transactions")]
+
+    assert columns == {
+        "transaction_id",
+        "card_id",
+        "occurred_at",
+        "merchant",
+        "amount_minor",
+        "currency",
+        "status",
+    }
+    assert ("card_id", "occurred_at") in index_columns
 
 
 # Regla: RN-002-14 - las fechas no salen en los resultados de búsqueda (mínima exposición).

@@ -101,3 +101,58 @@ def test_ac_002_15_verificar_identidad_event_without_intento_omits_key() -> None
     data = json.loads(stream.getvalue())
     assert data["customer_id"] == "C-0001"
     assert "intento" not in data
+
+
+def _transacciones_event(masked_card: str | None, transaction_ids: tuple[str, ...]) -> AuditEvent:
+    return AuditEvent(
+        conversation_id="conv-3",
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        tool="consultar_transacciones",
+        input=None,
+        outcome="found",
+        count=len(transaction_ids),
+        customer_ids=(),
+        error_code=None,
+        rule=None,
+        reason=None,
+        customer_id="C-0001",
+        masked_card=masked_card,
+        date_from="2026-01-01" if masked_card else None,
+        date_to="2026-01-31" if masked_card else None,
+        transaction_ids=transaction_ids,
+    )
+
+
+# Regla: RN-003-15 — cada invocación genera un registro de auditoría con la tarjeta enmascarada (`**** NNNN`), el rango consultado y los `transaction_id` devueltos, sin ningún número completo de tarjeta.  # noqa: E501
+# AC-003-17 · Art. 8
+def test_ac_003_17_consultar_transacciones_event_is_serialized_without_pan(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-003-17: línea JSON con tarjeta enmascarada, rango y transaction_ids como lista."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_transacciones_event("**** 4321", ("TX-000001",)))
+
+    raw = stream.getvalue()
+    assert raw.count("\n") == 1
+    data = json.loads(raw)
+    assert data["tool"] == "consultar_transacciones"
+    assert data["masked_card"] == "**** 4321"
+    assert data["date_from"] == "2026-01-01"
+    assert data["date_to"] == "2026-01-31"
+    assert data["transaction_ids"] == ["TX-000001"]
+    assert not re.search(r"\d{13,19}", raw)
+    assert capsys.readouterr().out == ""
+
+
+# Regla: RN-003-15 — la tarjeta enmascarada queda vacía si `card_last4` no es válido (borde: sin clave en la línea).  # noqa: E501
+# AC-003-17 · Art. 8
+def test_ac_003_17_event_without_masked_card_omits_optional_keys() -> None:
+    """AC-003-17: sin tarjeta, rango ni transacciones, la línea omite esas claves."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_transacciones_event(None, ()))
+
+    data = json.loads(stream.getvalue())
+    for key in ("masked_card", "date_from", "date_to", "transaction_ids"):
+        assert key not in data
