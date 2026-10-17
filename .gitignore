@@ -1,0 +1,29 @@
+# Dependencias y build
+node_modules/
+dist/
+src/agente-atencion/infrastructure/in/web/public/app.js
+
+# Secretos y entorno (Constitución Art. 9)
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Configuración personal de Claude Code
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Material del enunciado (no forma parte de la solución)
+Prueba*.pdf
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+coverage/
