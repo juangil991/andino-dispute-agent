@@ -34,7 +34,9 @@ def violations(path: str, content: str) -> list[str]:
     for mod in modules:
         root = mod.split(".")[0]
         if in_agent and root == "core_banking_mcp":
-            found.append(f"'{mod}': dispute_agent no puede importar core_banking_mcp (Art. 6, §3.2.2)")
+            found.append(
+                f"'{mod}': dispute_agent no puede importar core_banking_mcp (Art. 6, §3.2.2)"
+            )
         if in_agent and root == "sqlalchemy":
             found.append(f"'{mod}': el agente no accede a la base del core (Art. 6)")
         if in_core and root == "dispute_agent":

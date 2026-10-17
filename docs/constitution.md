@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Versión | 1.0.0 |
+| Versión | 1.0.1 |
 | Fecha de ratificación | 2026-10-16 |
 | Estado | Vigente |
 | Metodología | Spec-Driven Development (SDD) puro, sin frameworks de SDD |
@@ -111,8 +111,8 @@ Cada aplicación sigue puertos y adaptadores:
 |---|---|---|
 | `domain` | Entidades, value objects, reglas de negocio, `DisputePolicy`, errores de dominio | Solo la librería estándar |
 | `application` | Casos de uso y **puertos** (interfaces `Protocol`) | `domain` |
-| `infrastructure/in` | Adaptadores de entrada: FastAPI (agente), herramientas MCP (core) | `application`, `domain` |
-| `infrastructure/out` | Adaptadores de salida: Anthropic, cliente MCP, SQLAlchemy, auditoría | `application`, `domain` |
+| `infrastructure/inbound` | Adaptadores de entrada: FastAPI (agente), herramientas MCP (core) | `application`, `domain` |
+| `infrastructure/outbound` | Adaptadores de salida: Anthropic, cliente MCP, SQLAlchemy, auditoría | `application`, `domain` |
 
 Reglas:
 
@@ -189,11 +189,11 @@ Los esquemas exactos (entradas, salidas, errores) se definen en la spec correspo
 │   │   │   ├── ports/               # LLMPort, BankingToolsPort, ConversationRepository, AuditLogPort
 │   │   │   └── use_cases/           # HandleCustomerMessage, EvaluateDispute...
 │   │   ├── infrastructure/
-│   │   │   ├── in/
+│   │   │   ├── inbound/
 │   │   │   │   └── web/
 │   │   │   │       ├── api/         # routers FastAPI y esquemas Pydantic
 │   │   │   │       └── static/      # index.html, styles.css, chat.js
-│   │   │   └── out/
+│   │   │   └── outbound/
 │   │   │       ├── llm/             # AnthropicLLMAdapter
 │   │   │       ├── mcp/             # McpStdioBankingAdapter
 │   │   │       ├── persistence/     # ConversationRepository en memoria
@@ -206,9 +206,9 @@ Los esquemas exactos (entradas, salidas, errores) se definen en la spec correspo
 │       │   ├── ports/
 │       │   └── use_cases/
 │       ├── infrastructure/
-│       │   ├── in/
+│       │   ├── inbound/
 │       │   │   └── mcp/             # definición de herramientas FastMCP
-│       │   └── out/
+│       │   └── outbound/
 │       │       └── persistence/
 │       │           ├── models/      # modelos SQLAlchemy
 │       │           └── seeds/       # datos ficticios reproducibles
@@ -345,3 +345,10 @@ Una tarea está terminada solo si:
 - [ ] ¿Las acciones y decisiones quedan auditadas? (Art. 8)
 - [ ] ¿No hay secretos en el repositorio? (Art. 9)
 - [ ] ¿Los casos dudosos escalan por defecto? (Art. 10)
+
+### 6.4 Historial de enmiendas
+
+| Versión | Fecha | Cambio | Motivo | Impacto |
+|---|---|---|---|---|
+| 1.0.0 | 2026-10-16 | Ratificación | — | — |
+| 1.0.1 | 2026-10-16 | §3.2 y §3.6: `infrastructure/in` → `infrastructure/inbound` e `infrastructure/out` → `infrastructure/outbound`. | `in` es palabra reservada de Python: `core_banking_mcp.infrastructure.in` no se puede importar con `import`/`from`. `out` se renombra por simetría. | No cambia ningún principio (PATCH). Se actualizan las rutas en `.claude/rules/`, las plantillas, la skill `tasks-feature` y el plan y las tareas de `001-customer-search`. |

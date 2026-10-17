@@ -18,7 +18,7 @@
 ### [ ] T-NNN-01 — <título corto>
 
 - **Cubre:** AC-NNN-01
-- **App / capa:** `<dispute_agent | core_banking_mcp>` / `<domain | application | infrastructure/in | infrastructure/out>`
+- **App / capa:** `<dispute_agent | core_banking_mcp>` / `<domain | application | infrastructure/inbound | infrastructure/outbound>`
 - **Depende de:** —
 - **Archivos:** <rutas completas que la tarea crea o modifica>
 - **Test primero:** `tests/<unit|integration|contract|e2e>/<app>/<ruta>/test_<x>.py::test_ac_NNN_01_<descripcion>`

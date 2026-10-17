@@ -25,7 +25,7 @@
 
 | App | Capa | Componente | Nuevo / Modificado | Cambio |
 |---|---|---|---|---|
-| `dispute_agent` \| `core_banking_mcp` | `domain` \| `application` \| `infrastructure/in` \| `infrastructure/out` | <clase / módulo> | <...> | <...> |
+| `dispute_agent` \| `core_banking_mcp` | `domain` \| `application` \| `infrastructure/inbound` \| `infrastructure/outbound` | <clase / módulo> | <...> | <...> |
 
 ## 3. Puertos y adaptadores
 

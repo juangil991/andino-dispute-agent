@@ -33,8 +33,8 @@ Orden de las tareas, de adentro hacia afuera:
 | 2 | `domain` | Entidades, value objects, errores, `DisputePolicy` (un test parametrizado por fila `DP-`) |
 | 3 | `application` | Puertos y casos de uso, probados con fakes |
 | 4 | Contratos MCP | Esquemas de herramientas en `tests/contract/`, ambos lados |
-| 5 | `infrastructure/out` | SQLAlchemy, cliente MCP, Anthropic, auditoría |
-| 6 | `infrastructure/in` | Herramientas FastMCP, routers FastAPI, estáticos |
+| 5 | `infrastructure/outbound` | SQLAlchemy, cliente MCP, Anthropic, auditoría |
+| 6 | `infrastructure/inbound` | Herramientas FastMCP, routers FastAPI, estáticos |
 | 7 | Cableado y datos | `main.py` / `server.py`, `config.py`, semillas ficticias |
 | 8 | End-to-end | Chat → agente → MCP stdio → SQLite con `FakeLLM` |
 | 9 | Verificación final | Suite completa con cobertura, lint, formato y tipado (§5.5) |
