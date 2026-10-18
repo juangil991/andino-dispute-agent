@@ -1,4 +1,4 @@
-"""Smoke test por stdio real del servidor core_banking_mcp (AC-001/002/003/004)."""
+"""Smoke test por stdio real del servidor core_banking_mcp (AC-001/002/003/004/005)."""
 
 import os
 import sys
@@ -48,6 +48,7 @@ async def test_ac_002_01_verificar_identidad__stdio_server__verifies_seeded_cust
             )
 
     assert sorted(t.name for t in tools.tools) == [
+        "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
         "iniciar_disputa",
@@ -290,6 +291,148 @@ async def test_ac_004_12_iniciar_disputa__stdio_server__unverified_conversation_
     assert result.structuredContent["retryable"] is False
     assert "dispute_id" not in result.structuredContent
     assert "TX-0000" not in result.model_dump_json()
+
+
+_VERIFY_C0001 = {
+    "customer_id": "C-0001",
+    "birth_date": "1990-03-15",
+    "document_issue_date": "2008-04-20",
+}
+
+
+# Regla: RN-005-01 — La solicitud indica la tarjeta por su `card_id`, el identificador opaco que
+#   devuelve `consultar_transacciones` (RN-003-12); además indica el motivo (`reason`) y una clave
+#   de reintento (`idempotency_key`) generada por el consumidor.
+# Regla: RN-005-05 — `ACTIVE` ⇒ pasa a `BLOCKED` y se registra el bloqueo.
+# Regla: RN-005-06 — Un bloqueo nuevo registra `blocked_at`, igual al instante del reloj inyectado
+#   en ISO 8601 con la zona de Bogotá (`−05:00`), y el `reason` recibido. (Aquí el reloj es el
+#   real: se comprueba formato y zona, no un valor fijo.)
+# Regla: RN-005-10 — La respuesta exitosa contiene **solo** `card_id`, `masked_card` (`**** `
+#   seguido de los 4 últimos dígitos, RN-001-09), `status` (`BLOCKED`), `blocked_at`, `reason` y
+#   `already_blocked`.
+# AC-005-01 · Art. 7 (bloqueo por stdio real sobre la tarjeta semilla ACTIVE; base temporal limpia)
+async def test_ac_005_01_bloquear_tarjeta__stdio_server__blocks_seeded_active_card(
+    tmp_path: Path,
+) -> None:
+    """AC-005-01: por stdio real, tras verificar a C-0001, la tarjeta 4321 queda BLOCKED."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad", {"conversation_id": "conv-smoke-block", **_VERIFY_C0001}
+            )
+            result = await session.call_tool(
+                "bloquear_tarjeta",
+                {
+                    "conversation_id": "conv-smoke-block",
+                    "card_id": "CARD-0001",
+                    "reason": "FRAUD_SUSPECTED",
+                    "idempotency_key": "key-block-1",
+                },
+            )
+
+    assert not result.isError
+    assert result.structuredContent is not None
+    content = result.structuredContent
+    assert set(content) == {
+        "card_id",
+        "masked_card",
+        "status",
+        "blocked_at",
+        "reason",
+        "already_blocked",
+    }
+    assert content["card_id"] == "CARD-0001"
+    assert content["status"] == "BLOCKED"
+    assert content["masked_card"] == "**** 4321"
+    assert content["already_blocked"] is False
+    assert content["reason"] == "FRAUD_SUSPECTED"
+    assert datetime.fromisoformat(content["blocked_at"]).utcoffset() == timedelta(hours=-5)
+    assert content["blocked_at"].endswith("-05:00")
+    assert "4111111111114321" not in result.model_dump_json()
+
+
+# Regla: RN-005-05 — `BLOCKED` ⇒ respuesta exitosa con `already_blocked = true` y los datos del
+#   bloqueo original, sin registrar otro bloqueo ni cambiar nada.
+# Regla: RN-005-06 — Si una tarjeta ya bloqueada no tiene un bloqueo registrado (p. ej. por
+#   semilla), la respuesta trae `blocked_at = null` y `reason = null`.
+# Regla: RN-005-12 — Bloquear una tarjeta solo cambia el estado de esa tarjeta y registra el
+#   bloqueo y la clave de reintento. (Parte que verifica este test: la tarjeta semilla ya
+#   bloqueada no cambia.)
+# AC-005-04 · Art. 7 (tarjeta semilla BLOCKED sin registro de bloqueo, por stdio real)
+async def test_ac_005_04_bloquear_tarjeta__stdio_server__seeded_blocked_card_reports_already_blocked(  # noqa: E501
+    tmp_path: Path,
+) -> None:
+    """AC-005-04: por stdio real, la tarjeta 8765 ya bloqueada responde already_blocked=true."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad", {"conversation_id": "conv-smoke-blocked", **_VERIFY_C0001}
+            )
+            result = await session.call_tool(
+                "bloquear_tarjeta",
+                {
+                    "conversation_id": "conv-smoke-blocked",
+                    "card_id": "CARD-0002",
+                    "reason": "LOST_OR_STOLEN",
+                    "idempotency_key": "key-block-2",
+                },
+            )
+
+    assert not result.isError
+    assert result.structuredContent is not None
+    content = result.structuredContent
+    assert content["card_id"] == "CARD-0002"
+    assert content["status"] == "BLOCKED"
+    assert content["masked_card"] == "**** 8765"
+    assert content["already_blocked"] is True
+    assert content["blocked_at"] is None
+    assert content["reason"] is None
+
+
+# Regla: RN-005-03 — La herramienta exige que la conversación esté verificada en el servidor
+#   (estado de RN-002-13). Se rechaza con `IDENTITY_NOT_VERIFIED` toda conversación sin
+#   verificación exitosa, desconocida o bloqueada por agotar sus intentos. La verificación no se
+#   traslada: estar verificada en otra conversación no cuenta.
+# Regla: RN-005-12 — Bloquear una tarjeta solo cambia el estado de esa tarjeta y registra el
+#   bloqueo y la clave de reintento. (Parte que verifica este test: sin verificación no se
+#   cambia ninguna tarjeta.)
+# AC-005-09 · Art. 7 (sin identificación no se bloquea una tarjeta; almacén compartido)
+async def test_ac_005_09_bloquear_tarjeta__stdio_server__unverified_conversation_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """AC-005-09: por stdio real, una conversación distinta a la verificada recibe el rechazo."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad", {"conversation_id": "conv-verified", **_VERIFY_C0001}
+            )
+            result = await session.call_tool(
+                "bloquear_tarjeta",
+                {
+                    "conversation_id": "conv-other",
+                    "card_id": "CARD-0001",
+                    "reason": "FRAUD_SUSPECTED",
+                    "idempotency_key": "key-block-3",
+                },
+            )
+
+    assert result.structuredContent is not None
+    assert result.structuredContent["code"] == "IDENTITY_NOT_VERIFIED"
+    assert result.structuredContent["retryable"] is False
+    assert "already_blocked" not in result.structuredContent
+    assert "CARD-0001" not in result.model_dump_json()
 
 
 async def test_ac_001_01_buscar_cliente__stdio_server__finds_seeded_customer(

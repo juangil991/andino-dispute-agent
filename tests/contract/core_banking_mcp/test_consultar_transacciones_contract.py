@@ -100,6 +100,7 @@ def test_ac_003_11_consultar_transacciones__error_catalog__includes_identity_not
         "NOT_FOUND",
         "TRANSACTION_NOT_DISPUTABLE",
         "DISPUTE_ALREADY_OPEN",
+        "CARD_NOT_BLOCKABLE",
         "INTERNAL",
     }
 

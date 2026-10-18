@@ -6,6 +6,7 @@ from mcp.types import Tool
 
 from core_banking_mcp.config import CoreSettings
 from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
+    BloquearTarjetaOut,
     BuscarClienteOut,
     ConsultarTransaccionesOut,
     IniciarDisputaOut,
@@ -32,6 +33,7 @@ def test_ac_002_01_catalog_exposes_buscar_cliente_and_verificar_identidad() -> N
     """AC-002-01: list_tools devuelve solo buscar_cliente y verificar_identidad con sus esquemas."""
     tools = {t.name: t for t in _list_tools()}
     assert sorted(tools) == [
+        "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
         "iniciar_disputa",
@@ -77,6 +79,7 @@ def test_ac_003_14_catalog_exposes_consultar_transacciones_with_spec_schemas() -
     """AC-003-14: list_tools incluye consultar_transacciones con esquemas de la spec 003 §7."""
     tools = {t.name: t for t in _list_tools()}
     assert sorted(tools) == [
+        "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
         "iniciar_disputa",
@@ -108,6 +111,7 @@ def test_ac_004_15_catalog_exposes_iniciar_disputa_with_spec_schemas() -> None:
     """AC-004-15: list_tools incluye iniciar_disputa con los esquemas de la spec 004 §7."""
     tools = {t.name: t for t in _list_tools()}
     assert sorted(tools) == [
+        "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
         "iniciar_disputa",
@@ -133,3 +137,37 @@ def test_ac_004_15_catalog_exposes_iniciar_disputa_with_spec_schemas() -> None:
     assert disputa.outputSchema["properties"] == expected["properties"]
     assert disputa.outputSchema["additionalProperties"] is False
     assert disputa.outputSchema["$defs"]["TransactionItemOut"]["additionalProperties"] is False
+
+
+# Regla: RN-005-10 — La respuesta exitosa contiene **solo** `card_id`, `masked_card` (`**** `
+#   seguido de los 4 últimos dígitos, RN-001-09), `status` (`BLOCKED`), `blocked_at`, `reason` y
+#   `already_blocked`. (Parte que verifica este snapshot: los campos del esquema de salida.)
+# Regla: RN-005-11 — La respuesta nunca contiene el número completo de ninguna tarjeta, el
+#   documento del cliente ni su nombre, ni datos de otros clientes. (Parte que verifica este
+#   snapshot: salida cerrada con `additionalProperties: false`; entrada con sus 4 campos
+#   documentados y el `enum` de `reason`); el catálogo expone solo las herramientas declaradas
+#   en spec §7.
+# AC-005-13 · Art. 7 (mínima exposición)
+def test_ac_005_13_catalog_exposes_bloquear_tarjeta_with_spec_schemas() -> None:
+    """AC-005-13: list_tools incluye bloquear_tarjeta con los esquemas de la spec 005 §7."""
+    tools = {t.name: t for t in _list_tools()}
+    assert sorted(tools) == [
+        "bloquear_tarjeta",
+        "buscar_cliente",
+        "consultar_transacciones",
+        "iniciar_disputa",
+        "verificar_identidad",
+    ]
+    bloquear = tools["bloquear_tarjeta"]
+
+    properties = bloquear.inputSchema["properties"]
+    assert set(properties) == {"conversation_id", "card_id", "reason", "idempotency_key"}
+    assert not bloquear.inputSchema.get("required")
+    assert all(properties[name].get("description") for name in properties)
+    assert "bligatorio" in properties["conversation_id"]["description"]
+    assert properties["reason"]["enum"] == ["FRAUD_SUSPECTED", "LOST_OR_STOLEN"]
+
+    assert bloquear.outputSchema is not None
+    expected = BloquearTarjetaOut.model_json_schema()
+    assert bloquear.outputSchema["properties"] == expected["properties"]
+    assert bloquear.outputSchema["additionalProperties"] is False

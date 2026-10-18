@@ -18,6 +18,8 @@ _OPTIONAL_KEYS = (
     "dispute_reason",
     "idempotency_key",
     "dispute_id",
+    "card_id",
+    "block_reason",
 )
 
 

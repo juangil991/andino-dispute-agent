@@ -13,6 +13,10 @@ class CardNotFoundError(Exception):
     """El cliente no tiene ninguna tarjeta con esos últimos 4 dígitos."""
 
 
+class CardNotBlockableError(Exception):
+    """La tarjeta no se puede bloquear en su estado actual."""
+
+
 class TransactionNotFoundError(Exception):
     """La transacción no existe o no pertenece al cliente."""
 

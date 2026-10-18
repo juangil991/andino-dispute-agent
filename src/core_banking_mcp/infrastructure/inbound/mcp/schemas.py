@@ -14,6 +14,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     TRANSACTION_NOT_DISPUTABLE = "TRANSACTION_NOT_DISPUTABLE"
     DISPUTE_ALREADY_OPEN = "DISPUTE_ALREADY_OPEN"
+    CARD_NOT_BLOCKABLE = "CARD_NOT_BLOCKABLE"
     INTERNAL = "INTERNAL"
 
 
@@ -203,3 +204,28 @@ class IniciarDisputaOut(BaseModel):
         "UNRECOGNIZED_CHARGE", "DUPLICATE_CHARGE", "INCORRECT_AMOUNT", "NOT_RECEIVED", "OTHER"
     ] = Field(description="Código del motivo de la disputa.")
     transaction: TransactionItemOut = Field(description="La transacción disputada.")
+
+
+BLOCK_REASON_CODES: tuple[str, str] = ("FRAUD_SUSPECTED", "LOST_OR_STOLEN")
+
+
+class BloquearTarjetaOut(BaseModel):
+    """Salida de `bloquear_tarjeta`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    card_id: str = Field(description="Identificador opaco de la tarjeta bloqueada.")
+    masked_card: str = Field(description="Tarjeta enmascarada: '**** ' y sus 4 últimos dígitos.")
+    status: Literal["BLOCKED"] = Field(description="Estado de la tarjeta: BLOCKED.")
+    blocked_at: str | None = Field(
+        description=(
+            "Instante del bloqueo ISO 8601 con zona (p. ej. 2026-10-17T10:00:00-05:00); "
+            "null si la tarjeta ya estaba bloqueada sin bloqueo registrado."
+        )
+    )
+    reason: Literal["FRAUD_SUSPECTED", "LOST_OR_STOLEN"] | None = Field(
+        description="Motivo del bloqueo; null si no hay bloqueo registrado."
+    )
+    already_blocked: bool = Field(
+        description="True si la tarjeta ya estaba bloqueada y no se registró otro bloqueo."
+    )

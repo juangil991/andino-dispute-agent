@@ -52,6 +52,21 @@ class TransactionRow(Base):
     status: Mapped[str] = mapped_column(String)
 
 
+class CardBlockRow(Base):
+    __tablename__ = "card_blocks"
+    __table_args__ = (
+        Index("ux_card_blocks_conversation_key", "conversation_id", "idempotency_key", unique=True),
+        Index("ux_card_blocks_card", "card_id", unique=True),
+    )
+
+    block_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    card_id: Mapped[int] = mapped_column(ForeignKey("cards.card_id"))
+    conversation_id: Mapped[str] = mapped_column(String)
+    idempotency_key: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    blocked_at: Mapped[datetime] = mapped_column(DateTime)  # UTC sin zona
+
+
 class DisputeRow(Base):
     __tablename__ = "disputes"
     __table_args__ = (

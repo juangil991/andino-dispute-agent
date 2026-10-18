@@ -48,6 +48,7 @@ def test_ac_001_09_error_envelope_matches_spec() -> None:
         "NOT_FOUND",
         "TRANSACTION_NOT_DISPUTABLE",
         "DISPUTE_ALREADY_OPEN",
+        "CARD_NOT_BLOCKABLE",
         "INTERNAL",
     }
 
