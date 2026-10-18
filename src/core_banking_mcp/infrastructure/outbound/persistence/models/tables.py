@@ -50,6 +50,7 @@ class TransactionRow(Base):
     amount_minor: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String)
+    merchant_country: Mapped[str] = mapped_column(String(2), server_default="CO")
 
 
 class CardBlockRow(Base):

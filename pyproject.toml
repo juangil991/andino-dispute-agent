@@ -9,6 +9,9 @@ dependencies = [
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.7,<3",
     "typer>=0.27.3",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "anthropic>=0.40,<1",
 ]
 
 [dependency-groups]
@@ -19,6 +22,7 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
+    "httpx>=0.27,<1",
 ]
 
 [build-system]

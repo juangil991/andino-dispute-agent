@@ -110,6 +110,21 @@ def test_transaction_rejects_invalid_fields(overrides: dict[str, object]) -> Non
         _transaction(**overrides)
 
 
+# Regla: RN-007-30 — merchant_country es un código ISO 3166-1 alfa-2 (2 letras ASCII mayúsculas), por defecto "CO".  # noqa: E501
+# AC-007-33 · Art. 3
+@pytest.mark.parametrize(
+    "bad", ["co", "COL", "", "C1"], ids=["minuscula", "3-letras", "vacio", "digito"]
+)
+def test_ac_007_33_transaction_rejects_invalid_merchant_country(bad: str) -> None:
+    """AC-007-33: merchant_country inválido lanza InvalidInputError; "US" se conserva; defecto "CO"."""  # noqa: E501
+    with pytest.raises(InvalidInputError) as exc:
+        _transaction(merchant_country=bad)
+    assert exc.value.field == "merchant_country"
+
+    assert _transaction(merchant_country="US").merchant_country == "US"
+    assert _transaction().merchant_country == "CO"
+
+
 # Soporte de tests: invariantes de CustomerCard · Art. 3
 @pytest.mark.parametrize(
     ("card_id", "last4"),

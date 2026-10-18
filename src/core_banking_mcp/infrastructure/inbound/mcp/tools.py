@@ -21,18 +21,25 @@ from core_banking_mcp.application.use_cases.search_customers import (
 )
 from core_banking_mcp.domain.errors import InvalidInputError
 from core_banking_mcp.domain.masking import mask_card, mask_document
-from core_banking_mcp.domain.models.customer import Customer
+from core_banking_mcp.domain.models.customer import Card, Customer
 from core_banking_mcp.infrastructure.inbound.mcp.errors import (
     ErrorPassthroughMetadata,
     tool_error,
 )
 from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
     BuscarClienteOut,
+    CustomerCardOut,
     CustomerMatchOut,
     ErrorCode,
 )
 
 TOOL_NAME = "buscar_cliente"
+
+
+def _to_card(card: Card) -> CustomerCardOut:
+    # Toda tarjeta que lee el repositorio trae su identificador opaco.
+    assert card.card_id is not None
+    return CustomerCardOut(card_id=card.card_id, masked_card=mask_card(card.last4))
 
 
 def _to_match(customer: Customer) -> CustomerMatchOut:
@@ -41,6 +48,7 @@ def _to_match(customer: Customer) -> CustomerMatchOut:
         full_name=customer.full_name,
         masked_document=mask_document(customer.document),
         masked_cards=[mask_card(card.last4) for card in customer.cards],
+        cards=[_to_card(card) for card in customer.cards],
     )
 
 

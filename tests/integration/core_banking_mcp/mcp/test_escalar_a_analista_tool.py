@@ -90,6 +90,7 @@ _TRANSACTION_FIELDS = {
     "status",
     "card_id",
     "masked_card",
+    "merchant_country",
 }
 _TRANSACTION = {
     "transaction_id": "TX-L1",
@@ -100,6 +101,7 @@ _TRANSACTION = {
     "status": "CONFIRMED",
     "card_id": _CARD,
     "masked_card": "**** 4321",
+    "merchant_country": "CO",
 }
 _CARD_SUMMARY = {"card_id": _CARD, "masked_card": "**** 4321"}
 _REASONS = [
@@ -230,7 +232,7 @@ class _Harness:
 
 
 @asynccontextmanager
-async def _harness() -> AsyncIterator[_Harness]:
+async def _harness(merchant_country: str = "CO") -> AsyncIterator[_Harness]:
     engine = create_engine_from_url("sqlite:///:memory:")
     create_schema(engine)
     db = session_factory(engine)()
@@ -253,6 +255,7 @@ async def _harness() -> AsyncIterator[_Harness]:
         .with_card(_CARD, "4321")
         .with_occurred_at(_TX_DATE)
         .with_amount(Decimal("85000.00"))
+        .with_merchant_country(merchant_country)
         .build(),
     )
     cards = SqlAlchemyCardRepository(db)
@@ -650,6 +653,19 @@ async def test_ac_006_15_escalar_a_analista__second_request__registers_second_es
         unchanged = next(r for r in rows if r.escalation_id == first.structured["escalation_id"])
         assert (unchanged.escalation_id, unchanged.reason, unchanged.escalated_at) == first_snapshot
         assert unchanged.conversation_id == "A"
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia).  # noqa: E501
+# AC-007-33 · Art. 7
+async def test_ac_007_33_escalar_a_analista__us_merchant__returns_merchant_country() -> None:
+    """AC-007-33: la transacción del resumen trae merchant_country = "US"."""
+    async with _harness(merchant_country="US") as h:
+        result = await h.escalate(transaction_id="TX-L1", card_id=_CARD)
+
+        assert result.is_error is False
+        transaction = result.structured["summary"]["transaction"]
+        assert transaction["merchant_country"] == "US"
+        assert set(transaction) == _TRANSACTION_FIELDS
 
 
 # Regla: RN-006-12 — La respuesta exitosa contiene **solo** `escalation_id`, `status`, `escalated_at`, `reason` y `summary`. `summary` contiene **solo** `conversation_id`, `identity_verified`, `customer_id`, `transaction` (con exactamente los campos de `TransactionItem` de la spec 003, RN-003-12, o `null`), `card` (con exactamente `card_id` y `masked_card`, `**** ` seguido de los 4 últimos dígitos, RN-001-09, o `null`), `prior_actions`, `dispute_id` y `note`.  # noqa: E501

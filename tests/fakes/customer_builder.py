@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from core_banking_mcp.domain.models.customer import Card, Customer
+from core_banking_mcp.domain.models.customer import Card, CardStatus, Customer
 
 
 @dataclass
@@ -26,6 +26,12 @@ class CustomerBuilder:
 
     def with_cards(self, *cards: Card) -> "CustomerBuilder":
         self.cards = tuple(cards)
+        return self
+
+    def with_card(
+        self, last4: str, status: CardStatus = CardStatus.ACTIVE, card_id: str | None = None
+    ) -> "CustomerBuilder":
+        self.cards = (*self.cards, Card(last4, status, card_id))
         return self
 
     def build(self) -> Customer:

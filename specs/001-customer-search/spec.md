@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `001-customer-search` |
-| Versión | 0.1.0 |
+| Versión | 0.2.0 |
 | Estado | Aprobada |
 | Fecha | 2026-10-16 |
 | Origen | Issue [#25](https://github.com/juangil991/andino-dispute-agent/issues/25) del backlog (P0) |
@@ -54,7 +54,7 @@ Localizar no es autenticar (Art. 7): la búsqueda ocurre **antes** de verificar 
 | RN-001-05 | Validación de entrada: `document` de 1 a 32 caracteres y `full_name` de 1 a 100, contados tras recortar (vacío o solo espacios es inválido); `card_last4` exactamente 4 dígitos `0-9`, sin espacios; `conversation_id` obligatorio y no vacío. Toda violación ⇒ error `INVALID_INPUT` sin datos de clientes. | Issue #25; clarificación 2026-10-16; `mcp-tools.md` §6 |
 | RN-001-06 | Sin coincidencias, la respuesta es exitosa con lista vacía; no es un error. | Issue #25 |
 | RN-001-07 | Tope de 5 clientes. Con 1 a 5 coincidencias se devuelven todas con `refinement_required = false`. Con más de 5, la respuesta es exitosa, **sin ningún cliente** y con `refinement_required = true` para que se pida un dato adicional. | Issue #25; clarificación 2026-10-16 |
-| RN-001-08 | Cada cliente devuelto contiene **solo** `customer_id`, `full_name`, `masked_document` y `masked_cards`. Nunca saldos, productos, movimientos, documento completo ni número completo de tarjeta. | Issue #25; Art. 7; `mcp-tools.md` §8; clarificación 2026-10-16 |
+| RN-001-08 | Cada cliente devuelto contiene **solo** `customer_id`, `full_name`, `masked_document`, `masked_cards` y `cards` (lista de `{card_id, masked_card}` de sus tarjetas, en el mismo orden que `masked_cards`, sin estado ni número; spec 007, RN-007-31). Nunca saldos, productos, movimientos, documento completo ni número completo de tarjeta. | Issue #25; Art. 7; `mcp-tools.md` §8; clarificación 2026-10-16 |
 | RN-001-09 | Enmascarado: el documento se muestra como `****` seguido de sus 2 últimos caracteres (`D-1001` → `****01`); si tiene 4 caracteres o menos, solo `****`. Cada tarjeta se muestra como `**** ` seguido de sus 4 últimos dígitos (`**** 4321`). | Issue #25; `mcp-tools.md` §8; clarificación 2026-10-16 |
 | RN-001-10 | `buscar_cliente` **no requiere** identidad verificada (excepción de `mcp-tools.md` §5) y **no la confirma**: su respuesta no incluye ningún token ni indicador de verificación y la conversación no queda marcada como verificada. | Art. 7 |
 | RN-001-11 | Los clientes devueltos se ordenan por `customer_id` ascendente (resultado determinista). | §5.3.6 (tests deterministas) |
@@ -74,7 +74,7 @@ Cubre: HU-001-01, RN-001-01, RN-001-08
 - **Given** existe un único cliente con el documento `D-1001`
 - **When** se invoca `buscar_cliente` con `document = "D-1001"`
 - **Then** la respuesta contiene exactamente 1 cliente, con `refinement_required = false`
-- **And** el cliente trae solo `customer_id`, `full_name`, `masked_document` y `masked_cards` (sin saldos, productos ni movimientos)
+- **And** el cliente trae solo `customer_id`, `full_name`, `masked_document`, `masked_cards` y `cards` (sin saldos, productos ni movimientos)
 
 ### AC-001-02 — Comparación del documento
 
@@ -274,6 +274,7 @@ Cubre: RN-001-13
 | `full_name` | `string` | Nombre completo tal como está registrado. |
 | `masked_document` | `string` | Documento enmascarado (RN-001-09), p. ej. `****01`. |
 | `masked_cards` | `list[string]` | Tarjetas del cliente en cualquier estado, enmascaradas (`**** 4321`). Puede estar vacía. |
+| `cards` | `list[{card_id, masked_card}]` | **Nuevo (spec 007, RN-007-31).** Las mismas tarjetas y en el mismo orden que `masked_cards`: `card_id` es el identificador opaco de la tarjeta en el core y `masked_card` su forma enmascarada. No incluye el estado ni el número. Puede estar vacía. |
 
 Sin resultados: `{"customers": [], "refinement_required": false}` (no es un error).
 Más de 5 coincidencias: `{"customers": [], "refinement_required": true}`.
@@ -315,6 +316,7 @@ Ninguna.
 |---|---|---|---|
 | 0.1.0 | 2026-10-16 | Versión inicial a partir de la issue #25 | Juangiov (con Claude Code) |
 | 0.1.0 | 2026-10-16 | Spec aprobada por el usuario | Juangiov |
+| 0.2.0 | 2026-10-18 | Se añade `cards` a `CustomerMatch` (RN-001-08 y tabla de §7) (cambio compatible, spec [007](../007-dispute-resolution-agent/spec.md) §7.1, RN-007-31) | Juangiov (con Claude Code) |
 
 ---
 

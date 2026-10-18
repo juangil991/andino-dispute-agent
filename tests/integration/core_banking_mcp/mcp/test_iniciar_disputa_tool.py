@@ -64,6 +64,7 @@ _TRANSACTION_FIELDS = {
     "status",
     "card_id",
     "masked_card",
+    "merchant_country",
 }
 _REASONS = [
     "UNRECOGNIZED_CHARGE",
@@ -136,6 +137,7 @@ async def _harness(
     occurred_at: datetime = _TX_DATE,
     card_status: CardStatus = CardStatus.ACTIVE,
     previous: DisputeStatus | None = None,
+    merchant_country: str = "CO",
 ) -> AsyncIterator[_Harness]:
     engine = create_engine_from_url("sqlite:///:memory:")
     create_schema(engine)
@@ -158,6 +160,7 @@ async def _harness(
         .with_card(_CARD_REF, "4321")
         .with_occurred_at(occurred_at)
         .with_amount(Decimal("85000.00"))
+        .with_merchant_country(merchant_country)
         .with_status(tx_status)
         .build(),
     )
@@ -208,6 +211,7 @@ async def test_ac_004_01_iniciar_disputa__confirmed_transaction__opens_dispute()
             "status": "CONFIRMED",
             "card_id": _CARD_REF,
             "masked_card": "**** 4321",
+            "merchant_country": "CO",
         }
         rows = h.disputes()
         assert len(rows) == 1
@@ -219,6 +223,18 @@ async def test_ac_004_01_iniciar_disputa__confirmed_transaction__opens_dispute()
         assert h.transaction_status() == "CONFIRMED"
         assert h.card_status() == "ACTIVE"
         assert h.store.get("A") == verification_before
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia).  # noqa: E501
+# AC-007-33 · Art. 7
+async def test_ac_007_33_iniciar_disputa__us_merchant__returns_merchant_country() -> None:
+    """AC-007-33: el TransactionItem de la disputa trae merchant_country = "US"."""
+    async with _harness(merchant_country="US") as h:
+        result = await h.open()
+
+        assert result.is_error is False
+        assert result.structured["transaction"]["merchant_country"] == "US"
+        assert set(result.structured["transaction"]) == _TRANSACTION_FIELDS
 
 
 # Regla: RN-004-02 — El motivo es un código de un catálogo cerrado: UNRECOGNIZED_CHARGE, DUPLICATE_CHARGE, INCORRECT_AMOUNT, NOT_RECEIVED y OTHER.  # noqa: E501

@@ -17,6 +17,7 @@ class TransactionBuilder:
     amount: Decimal = field(default_factory=lambda: Decimal("100.00"))
     currency: str = "COP"
     status: TransactionStatus = TransactionStatus.CONFIRMED
+    merchant_country: str = "CO"
 
     def with_id(self, transaction_id: str) -> "TransactionBuilder":
         self.transaction_id = transaction_id
@@ -43,6 +44,10 @@ class TransactionBuilder:
         self.currency = currency
         return self
 
+    def with_merchant_country(self, merchant_country: str) -> "TransactionBuilder":
+        self.merchant_country = merchant_country
+        return self
+
     def build(self) -> Transaction:
         return Transaction(
             transaction_id=self.transaction_id,
@@ -53,4 +58,5 @@ class TransactionBuilder:
             amount=self.amount,
             currency=self.currency,
             status=self.status,
+            merchant_country=self.merchant_country,
         )

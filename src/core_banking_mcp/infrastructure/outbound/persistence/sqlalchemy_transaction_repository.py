@@ -34,6 +34,7 @@ def _to_transaction(row: TransactionRow, card_ref: str, last4: str) -> Transacti
         amount=(Decimal(row.amount_minor) / _CENTS).quantize(_CENTS_STEP),
         currency=row.currency,
         status=TransactionStatus(row.status),
+        merchant_country=row.merchant_country,
     )
 
 
@@ -55,6 +56,7 @@ class SqlAlchemyTransactionRepository:
                 amount_minor=int(transaction.amount * _CENTS),
                 currency=transaction.currency,
                 status=transaction.status.value,
+                merchant_country=transaction.merchant_country,
             )
         )
         self._session.commit()

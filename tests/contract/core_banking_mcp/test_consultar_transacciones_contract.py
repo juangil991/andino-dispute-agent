@@ -19,6 +19,7 @@ _ITEM_FIELDS = {
     "status",
     "card_id",
     "masked_card",
+    "merchant_country",
 }
 
 
@@ -34,7 +35,7 @@ def _item_schema() -> dict[str, Any]:
 #   documento del cliente ni su nombre, ni datos de otros clientes.
 # AC-003-14 · Art. 7 (datos mínimos)
 def test_ac_003_14_consultar_transacciones__output_schema__has_exactly_spec_fields() -> None:
-    """AC-003-14: salida con transactions y refinement_required; ítem con los 8 campos."""
+    """AC-003-14: salida con transactions y refinement_required; ítem con los 9 campos."""
     out_schema = ConsultarTransaccionesOut.model_json_schema()
     assert set(out_schema["properties"]) == {"transactions", "refinement_required"}
     assert out_schema["additionalProperties"] is False
@@ -120,3 +121,14 @@ def test_ac_003_18_consultar_transacciones__error_envelope__has_code_message_ret
     """AC-003-09/AC-003-18: ToolErrorOut conserva code, message y retryable."""
     schema = ToolErrorOut.model_json_schema()
     assert set(schema["properties"]) == {"code", "message", "retryable"}
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia).  # noqa: E501
+# AC-007-33 · Art. 7 (datos mínimos)
+def test_ac_007_33_consultar_transacciones__item_schema__has_merchant_country() -> None:
+    """AC-007-33: el ítem cerrado incluye merchant_country (string) con descripción."""
+    item = TransactionItemOut.model_json_schema()
+    assert item["properties"]["merchant_country"]["type"] == "string"
+    assert item["properties"]["merchant_country"]["description"]
+    assert item["additionalProperties"] is False
+    assert _item_schema() == item
