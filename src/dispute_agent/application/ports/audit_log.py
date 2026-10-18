@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 AuditEventType = Literal[
-    "tool_call", "tool_blocked", "decision", "escalation", "conversation_closed"
+    "tool_call", "tool_blocked", "decision", "escalation", "conversation_closed", "llm_response"
 ]
 
 

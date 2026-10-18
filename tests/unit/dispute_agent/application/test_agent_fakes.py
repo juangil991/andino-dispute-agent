@@ -8,7 +8,7 @@ from tests.fakes.agent_transaction_builder import DisputedTransactionBuilder
 from tests.fakes.conversation_builder import ConversationBuilder
 from tests.fakes.fake_agent_audit_log import FakeAgentAuditLog
 from tests.fakes.fake_banking_tools import FakeBankingTools
-from tests.fakes.fake_llm import FakeLLM
+from tests.fakes.fake_llm import FakeLLM, end_turn_response, tool_use_response
 from tests.fakes.fixed_agent_clock import FixedAgentClock
 from tests.fakes.sequential_id_generator import SequentialIdGenerator
 
@@ -51,6 +51,47 @@ def test_fake_llm_replays_script_and_records_requests() -> None:
     asyncio.run(run())
     assert [r.system for r in fake.requests] == ["sys", "sys2", "s", "s"]
     assert fake.requests[0].messages == msgs
+
+
+def _run_script(fake: FakeLLM, n: int) -> list[LLMResponse]:
+    msgs = (ChatMessage(role="user", text="hi"),)
+
+    async def run() -> list[LLMResponse]:
+        return [await fake.complete("s", msgs, ()) for _ in range(n)]
+
+    return asyncio.run(run())
+
+
+def test_fake_llm__no_stop_reason__inferred_from_tool_calls() -> None:
+    # Soporte de tests: FakeLLM con razón de parada · Art. 3
+    call = ToolCall(id="c1", name="buscar_cliente", arguments={})
+    first, second = _run_script(
+        FakeLLM([LLMResponse(tool_calls=(call,)), LLMResponse(text="fin")]), 2
+    )
+    assert first.stop_reason == "tool_use"
+    assert second.stop_reason == "end_turn"
+    assert first.tool_calls == (call,)
+
+
+def test_fake_llm__explicit_stop_reason__is_respected() -> None:
+    # Soporte de tests: FakeLLM con razón de parada · Art. 3
+    (resp,) = _run_script(FakeLLM([LLMResponse(text="x", stop_reason="max_tokens")]), 1)
+    assert resp.stop_reason == "max_tokens"
+
+
+def test_fake_llm__inference_disabled__none_passes_through() -> None:
+    # Soporte de tests: FakeLLM con razón de parada · Art. 3
+    (resp,) = _run_script(FakeLLM([LLMResponse(text="x")], infer_stop_reason=False), 1)
+    assert resp.stop_reason is None
+
+
+def test_fake_llm_response_builders_set_stop_reason() -> None:
+    # Soporte de tests: FakeLLM con razón de parada · Art. 3
+    call = ToolCall(id="c1", name="t", arguments={})
+    tool = tool_use_response(call, text="pensando")
+    end = end_turn_response("listo")
+    assert (tool.stop_reason, tool.tool_calls, tool.text) == ("tool_use", (call,), "pensando")
+    assert (end.stop_reason, end.tool_calls, end.text) == ("end_turn", (), "listo")
 
 
 def test_fake_banking_tools_replays_errors_and_records_calls() -> None:

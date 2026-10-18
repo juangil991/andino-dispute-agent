@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 
 from dispute_agent.application.agent_tools import LLM_TOOLS, WRITE_TOOLS
+from dispute_agent.application.loop_control import LoopStep, LoopVerdict, classify_llm_response
 from dispute_agent.application.ports.audit_log import AgentAuditEvent, AuditEventType, AuditLogPort
 from dispute_agent.application.ports.banking_tools import (
     BankingToolError,
@@ -20,6 +21,7 @@ from dispute_agent.application.ports.llm import (
     ChatMessage,
     LLMError,
     LLMPort,
+    LLMResponse,
     ToolCall,
     ToolResult,
 )
@@ -55,6 +57,13 @@ _CARD_RULE = "RN-007-15"
 _FAILURE_RULE = "RN-007-21"
 _LLM_RULE = "RN-007-23"
 _UNAVAILABLE_CODE = "UNAVAILABLE"
+# Motivo fijo por regla para el evento `llm_response` (RN-007-36); nunca incluye texto del LLM.
+_LLM_RESPONSE_REASONS = {
+    "RN-007-32": "la razón de parada del LLM decide si continuar o responder",
+    "RN-007-34": "razón de parada inesperada del LLM",
+    "RN-007-35": "respuesta del LLM incoherente o vacía",
+    _LLM_RULE: "límite de llamadas al LLM superado",
+}
 _READ_TOOLS = frozenset({"buscar_cliente", "verificar_identidad", "consultar_transacciones"})
 _INTENT_TOOLS = frozenset({"evaluar_disputa", "reportar_fraude", "solicitar_atencion_humana"})
 _ALLOWED_ARGUMENTS: dict[str, frozenset[str]] = {
@@ -76,7 +85,11 @@ class IterationLimitExceeded(Exception):  # noqa: N818 - nombre fijado por tasks
 
 
 class LLMOutputError(Exception):
-    """Salida inválida del LLM: herramienta desconocida o argumentos inválidos (RN-007-23)."""
+    """Salida inválida del LLM (RN-007-23, RN-007-34, RN-007-35); `rule` indica la regla."""
+
+    def __init__(self, message: str, rule: str = _LLM_RULE) -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
 @dataclass(frozen=True)
@@ -169,14 +182,16 @@ class HandleCustomerMessage:
                 EscalationReason.INCONCLUSIVE_RULES,
                 OutcomeKind.ITERATION_LIMIT,
                 "límite de llamadas al LLM superado",
+                _LLM_RULE,
             )
-        except (LLMError, LLMOutputError):
+        except (LLMError, LLMOutputError) as error:
             reply = await self._fail_turn(
                 conv,
                 outcomes,
                 EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE,
                 OutcomeKind.LLM_FAILURE,
                 "falla o salida inválida del LLM",
+                error.rule if isinstance(error, LLMOutputError) else _LLM_RULE,
             )
         reply = redact_reply(reply, conv.provided_documents)
         conv.history.append(ChatMessage("assistant", text=reply))
@@ -191,11 +206,12 @@ class HandleCustomerMessage:
         reason: EscalationReason,
         kind: OutcomeKind,
         why: str,
+        rule: str,
     ) -> str:
-        """RN-007-23: deriva, cierra y responde con el texto fijo, sin llamar al LLM."""
+        """RN-007-23/34/35: deriva, cierra y responde con el texto fijo, sin llamar al LLM."""
         failure = Outcome(
             kind=kind,
-            rule=_LLM_RULE,
+            rule=rule,
             reason=messages.OUTCOME_REASONS[kind],
             next_steps=messages.OUTCOME_NEXT_STEPS[kind],
         )
@@ -203,8 +219,8 @@ class HandleCustomerMessage:
             # Ya derivada en este turno: no se duplica la derivación.
             outcomes.append(failure)
         else:
-            escalated = await self._escalation.escalate(conv, reason, _LLM_RULE)
-            self._close(conv, "llm", _LLM_RULE, why)
+            escalated = await self._escalation.escalate(conv, reason, rule)
+            self._close(conv, "llm", rule, why)
             if escalated.kind is OutcomeKind.ESCALATION_FAILED:
                 outcomes.extend([failure, escalated])
                 failure = escalated
@@ -225,11 +241,9 @@ class HandleCustomerMessage:
         for iteration in range(1, self._max_iterations + 1):
             history = tuple(m for m in conv.history if isinstance(m, ChatMessage))
             response = await self._llm.complete(SYSTEM_PROMPT, history, LLM_TOOLS)
-            if not response.tool_calls:
-                return response.text
-            if iteration == self._max_iterations:
-                # No se ejecuta ninguna acción pendiente de la última respuesta (RN-007-23).
-                raise IterationLimitExceeded(iteration)
+            reply = self._decide(conv, response, iteration)
+            if reply is not None:
+                return reply
             parsed = [(call, _parse(call)) for call in response.tool_calls]
             conv.history.append(ChatMessage("assistant", response.text, response.tool_calls))
             if any(call.name == _HUMAN_TOOL for call, _ in parsed):
@@ -238,6 +252,48 @@ class HandleCustomerMessage:
                 results = [await self._dispatch(conv, c, args, outcomes) for c, args in parsed]
             conv.history.append(ChatMessage("user", tool_results=tuple(results)))
         raise IterationLimitExceeded(self._max_iterations)
+
+    def _decide(self, conv: Conversation, response: LLMResponse, iteration: int) -> str | None:
+        """RN-007-32/34/35: decide por la razón de parada, antes de parsear o ejecutar nada.
+
+        Devuelve el texto a enviar al cliente, o `None` si el loop debe continuar.
+        """
+        verdict = classify_llm_response(response)
+        capped = verdict.step is LoopStep.CONTINUE and iteration == self._max_iterations
+        self._audit_llm_response(conv, response, verdict, iteration, capped)
+        if verdict.step is LoopStep.ESCALATE:
+            raise LLMOutputError(verdict.why, rule=verdict.rule)
+        if verdict.step is LoopStep.REPLY:
+            return response.text
+        if capped:
+            # No se ejecuta ninguna acción pendiente de la última respuesta (RN-007-23).
+            raise IterationLimitExceeded(iteration)
+        return None
+
+    def _audit_llm_response(
+        self,
+        conv: Conversation,
+        response: LLMResponse,
+        verdict: LoopVerdict,
+        iteration: int,
+        capped: bool,
+    ) -> None:
+        """RN-007-36: registra cómo terminó la respuesta, sin su texto ni argumentos."""
+        rule = _LLM_RULE if capped else verdict.rule
+        self._audit(
+            conv,
+            "llm_response",
+            tool=None,
+            input={"call": iteration},
+            output={
+                "stop_reason": response.stop_reason,
+                "decision": LoopStep.ESCALATE.value if capped else verdict.step.value,
+                "tool_call_count": len(response.tool_calls),
+                "tool_calls": [call.name for call in response.tool_calls],
+            },
+            rule=rule,
+            reason=_LLM_RESPONSE_REASONS[rule],
+        )
 
     async def _human_request(
         self,
@@ -569,7 +625,7 @@ class HandleCustomerMessage:
         conv: Conversation,
         event_type: AuditEventType,
         *,
-        tool: str,
+        tool: str | None,
         input: dict[str, object],
         output: dict[str, object],
         rule: str,

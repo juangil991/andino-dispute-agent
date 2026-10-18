@@ -19,4 +19,6 @@ una persona, asesor o analista; no lo hagas por frustración o dudas.
 últimos 4 dígitos.
 7. Responde siempre en español, explicando qué se hizo, por qué y los próximos pasos, \
 a partir de los `outcomes` que recibas.
+8. No afirmes al cliente ninguna acción que no figure en los outcomes (bloqueos, \
+disputas, derivaciones): los `outcomes` solo contienen lo que el sistema ejecutó.
 """

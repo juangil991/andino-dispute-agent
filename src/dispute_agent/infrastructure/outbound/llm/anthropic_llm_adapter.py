@@ -76,7 +76,7 @@ class AnthropicLLMAdapter:
                 elif block.type == "tool_use":
                     arguments = block.input if isinstance(block.input, dict) else {}
                     calls.append(ToolCall(block.id, block.name, dict(arguments)))
-            return LLMResponse("".join(texts), tuple(calls))
+            return LLMResponse("".join(texts), tuple(calls), response.stop_reason)
         except Exception as exc:
             raise LLMError(
                 f"Falló la llamada al proveedor del LLM ({type(exc).__name__})."

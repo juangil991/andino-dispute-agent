@@ -3,8 +3,8 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Spec | [spec.md](./spec.md) — versión 0.1.1 (la 0.1.0 se implementó; la 0.1.1 solo aclara trazabilidad, sin cambios de comportamiento) |
-| Plan | [plan.md](./plan.md) — versión 0.1.0 |
+| Spec | [spec.md](./spec.md) — versión 0.2.0 (T-007-01…29 implementaron la 0.1.x; T-007-30…36 implementan la 0.2.0, issue #41) |
+| Plan | [plan.md](./plan.md) — versión 0.2.0 (§1.1 para T-007-30…36) |
 | Fecha | 2026-10-18 |
 
 **Estados:** `[ ]` pendiente · `[~]` en curso · `[x]` terminada
@@ -27,7 +27,7 @@ Rutas relativas a la raíz del repositorio. Notas para quien implemente:
 4. Un test de soporte puro no lleva el prefijo y declara `# Soporte de tests: <qué> · Art. 3`.
 5. Los tests de `tests/contract/` y `tests/integration/` se nombran `test_ac_007_NN_<componente>__<condición>__<resultado>`. Los parametrizados llevan `ids=` legibles.
 6. Las aserciones reproducen el **Then** completo del AC, incluidas las líneas `And`.
-7. Antes de citar una RN, comprobar el `Cubre:` del AC en `spec.md`. La spec llega a RN-007-31 y a DP-007-07.
+7. Antes de citar una RN, comprobar el `Cubre:` del AC en `spec.md`. La spec llega a RN-007-36, a DP-007-07 y a AC-007-43.
 
 ---
 
@@ -660,6 +660,145 @@ La auditoría completa dio **No cumple** (2 Bloqueantes, 7 Mayores, 5 Menores). 
   - **H-13 (AC-007-21):** hacer la aserción del `reply` no vacua: usar un LLM de prueba local que repita en su respuesta el contenido del último `tool_result` que recibió (así, si el agente filtrara datos al LLM, el `reply` los contendría), además de comprobar los `tool_result` registrados.
   - **H-04:** una vez actualizada la spec, el test de soporte del motivo por defecto (~línea 924) pasa a `test_ac_007_01_…` si ejecuta la fila de AC-007-01 con `# Regla: RN-007-10 — <literal>` y `# AC-007-01 · Art. 5`; si no, se queda como soporte.
 
+## Tareas de la versión 0.2.0 (issue #41: el loop decide por la razón de parada)
+
+Implementan la spec 0.2.0 según el plan 0.2.0, §1.1. Solo tocan `dispute_agent`. Regla común: al terminar cada tarea, la suite completa debe seguir en verde. Los guiones existentes no se reescriben, porque el `FakeLLM` infiere la razón de parada (T-007-30).
+
+### [x] T-007-30 — `LLMResponse.stop_reason` y `FakeLLM` con razón de parada
+
+- **Cubre:** soporte de T-007-31…34 (AC-007-35…43); habilita la fila "ausente" de AC-007-40.
+- **App / capa:** `dispute_agent` / `application` (puerto) + `tests/fakes`
+- **Depende de:** —
+- **Archivos:** `src/dispute_agent/application/ports/llm.py`, `tests/fakes/fake_llm.py`, `tests/unit/dispute_agent/application/test_agent_fakes.py`
+- **Aclaraciones de diseño (vinculantes):**
+  - `LLMResponse` gana `stop_reason: str | None = None` como **último** campo, para que los constructores posicionales existentes sigan valiendo.
+  - `FakeLLM(script, infer_stop_reason: bool = True)`. Si el elemento del guion trae `stop_reason=None` y la inferencia está activa, devuelve una copia con `"tool_use"` si hay `tool_calls` y `"end_turn"` si no los hay. Con `infer_stop_reason=False`, devuelve la respuesta tal cual. Una razón explícita nunca se altera.
+  - Constructores de guion en `tests/fakes/fake_llm.py`: `tool_use_response(*calls: ToolCall, text: str = "") -> LLMResponse` y `end_turn_response(text: str) -> LLMResponse`.
+- **Test primero:** `tests/unit/dispute_agent/application/test_agent_fakes.py::test_fake_llm__no_stop_reason__inferred_from_tool_calls`
+- **Red:** falla con `TypeError` (`LLMResponse` no acepta `stop_reason`) o `ImportError` (constructores). Tests de soporte (`# Soporte de tests: FakeLLM con razón de parada · Art. 3`):
+  - inferencia: con peticiones → `tool_use`; sin peticiones → `end_turn`;
+  - una razón explícita (`max_tokens`) se respeta;
+  - con `infer_stop_reason=False`, `None` llega tal cual;
+  - los dos constructores producen la razón correcta.
+- **Green:** campo nuevo y lógica del `FakeLLM`.
+- **Refactor:** —
+
+### [x] T-007-31 — Clasificador `classify_llm_response`
+
+- **Cubre:** AC-007-35, AC-007-36, AC-007-40, AC-007-42 (nivel unitario del clasificador); RN-007-32, RN-007-34, RN-007-35.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-30
+- **Archivos:** `src/dispute_agent/application/loop_control.py`, `tests/unit/dispute_agent/application/test_loop_control.py`
+- **Aclaraciones de diseño (vinculantes):** `LoopStep` (`Enum`: `CONTINUE`, `REPLY`, `ESCALATE`), `LoopVerdict(step, rule, why)` (dataclass congelada) y `classify_llm_response(response: LLMResponse) -> LoopVerdict`, según la tabla del plan §1.1. Es stdlib pura y no conoce el tope de iteraciones; lo aplica el caso de uso (T-007-33). "Texto vacío" significa `not text.strip()`.
+- **Test primero:** `tests/unit/dispute_agent/application/test_loop_control.py::test_ac_007_40_loop_control__unexpected_stop_reason__escalate`
+- **Red:** falla con `ImportError`. Tests parametrizados con `ids=`:
+  - `test_ac_007_40_…`: `max_tokens`, `refusal`, `pause_turn`, `stop_sequence`, `other_reason` y `None`, con y sin peticiones → `ESCALATE`, `RN-007-34`.
+  - `test_ac_007_42_loop_control__incoherent_or_empty__escalate`: las 4 filas de AC-007-42 → `ESCALATE`, `RN-007-35`.
+  - `test_ac_007_35_loop_control__tool_use_with_calls__continue` → `CONTINUE`, `RN-007-32`.
+  - `test_ac_007_36_loop_control__end_turn_with_text__reply` → `REPLY`, `RN-007-32`.
+- **Green:** la función y sus tipos.
+- **Refactor:** —
+
+### [x] T-007-32 — `AnthropicLLMAdapter` copia la razón de parada
+
+- **Cubre:** AC-007-40 (integración); RN-007-32, RN-007-34.
+- **App / capa:** `dispute_agent` / `infrastructure/outbound`
+- **Depende de:** T-007-30
+- **Archivos:** `src/dispute_agent/infrastructure/outbound/llm/anthropic_llm_adapter.py`, `tests/integration/dispute_agent/llm/test_anthropic_llm_adapter.py`
+- **Test primero:** `tests/integration/dispute_agent/llm/test_anthropic_llm_adapter.py::test_ac_007_40_anthropic_adapter__stop_reason__passed_through`
+- **Red:** con `httpx.MockTransport` que devuelve una respuesta de Messages API con `stop_reason` igual a `tool_use`, `end_turn`, `max_tokens`, `refusal` y `pause_turn` (parametrizado), `LLMResponse.stop_reason` es `None` en vez del valor recibido.
+- **Green:** `LLMResponse(text, calls, response.stop_reason)`.
+- **Refactor:** —
+
+### [x] T-007-33 — Loop de `HandleCustomerMessage` guiado por la razón de parada
+
+- **Cubre:** AC-007-35, AC-007-36, AC-007-37, AC-007-38, AC-007-39 (comportamiento), AC-007-40, AC-007-41, AC-007-42; RN-007-23, RN-007-24, RN-007-32, RN-007-33, RN-007-34, RN-007-35.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-30, T-007-31
+- **Archivos:** `src/dispute_agent/application/use_cases/handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_stop_reason.py`. Solo si un guion existente termina con una respuesta final de texto vacío, que ahora sería salida inválida (RN-007-35), se le da un texto no vacío, sin cambiar lo que verifica: `tests/unit/dispute_agent/application/test_handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_escalations.py`, `tests/integration/dispute_agent/web/test_chat_api.py` y `tests/e2e/test_chat_e2e.py`. Cualquier ajuste de este tipo se anota en NOTAS.
+- **Aclaraciones de diseño (vinculantes):**
+  - En `_run_loop`, por cada respuesta: `verdict = classify_llm_response(response)`. Si `verdict.step is CONTINUE` y `iteration == max_iterations`, se lanza `IterationLimitExceeded`. Si `ESCALATE`, se lanza `LLMOutputError(why, rule=verdict.rule)`. Si `REPLY`, se devuelve `response.text`. Todo esto ocurre **antes** de `_parse` y de añadir la respuesta al historial: con `ESCALATE` no se parsea ni se ejecuta ninguna petición.
+  - Se elimina el criterio `if not response.tool_calls: return response.text`.
+  - `LLMOutputError.__init__(self, message: str, rule: str = "RN-007-23")` guarda `self.rule`. Los errores de `_parse` siguen con `RN-007-23`.
+  - `_fail_turn` recibe la regla: `LLMOutputError.rule` para `LLM_FAILURE` y `RN-007-23` para `ITERATION_LIMIT` y `LLMError`. La usa en el `rule` del `Outcome` y en `_close`. Derivación, mensaje fijo y cierre sin cambios.
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_stop_reason.py::test_ac_007_40_handle_message__unexpected_stop_reason__escalates_without_actions`
+- **Red:** archivo nuevo con el `Given` común de spec §6 (builders, `FakeBankingTools`, `FakeLLM`). Tests:
+  - `test_ac_007_40_…`: las 6 filas, con `infer_stop_reason=False` para "ausente"; hoy, una respuesta sin peticiones se trata como final válida y el test falla porque no hay `escalate`.
+  - `test_ac_007_41_handle_message__truncated_with_complete_calls__executes_none`: hoy se ejecutan las peticiones.
+  - `test_ac_007_42_handle_message__incoherent_or_empty__escalates`: las 4 filas.
+  - `test_ac_007_35_handle_message__tool_use__continues_with_tool_result`, `test_ac_007_36_handle_message__end_turn__replies_once`, `test_ac_007_37_handle_message__several_steps__not_cut_by_count`, `test_ac_007_38_handle_message__iteration_cap__safety_net_only` (4 filas, `max_iterations` inyectado) y `test_ac_007_39_handle_message__words_do_not_drive_actions` (2 filas). Pueden pasar ya en Red, porque el comportamiento 0.1.x coincide en esos casos; se anota y se comprueba su sensibilidad.
+
+  Aserciones con el Then completo de cada AC: número de llamadas al `FakeLLM` y a `FakeBankingTools`, `escalate` con `UNRECOVERABLE_SYSTEM_FAILURE`, `outcomes` y su `rule`, `reply` fijo de `LLM_FAILURE` sin el texto del guion, y `status`.
+- **Green:** loop guiado por el clasificador; `LLMOutputError.rule`; `_fail_turn` con la regla.
+- **Refactor:** extraer la decisión por respuesta a un método privado si `_run_loop` crece.
+
+### [x] T-007-34 — Auditoría `llm_response` de cada respuesta del LLM
+
+- **Cubre:** AC-007-43; RN-007-28, RN-007-36.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-33
+- **Archivos:** `src/dispute_agent/application/ports/audit_log.py`, `src/dispute_agent/application/use_cases/handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_stop_reason.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_audit.py`
+- **Aclaraciones de diseño (vinculantes):**
+  - `AuditEventType` gana `"llm_response"`.
+  - Por cada respuesta del LLM, después de clasificar y aplicar el tope, y antes de actuar, se emite `_audit(conv, "llm_response", tool=None, input={"call": iteration}, output={"stop_reason": …, "decision": step.value, "tool_call_count": n, "tool_calls": [nombres]}, rule=…, reason=<texto fijo por regla>)`.
+  - Al superar el tope, `decision = "ESCALATE"` y `rule = "RN-007-23"`.
+  - Nunca se incluye `response.text` ni los argumentos.
+  - Si `_audit` exige `tool: str`, se admite `None` (el campo del evento ya es opcional).
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_stop_reason.py::test_ac_007_43_handle_message__each_llm_response__audited_without_text`
+- **Red:** falla porque no hay eventos `llm_response`. Escenario de AC-007-43 con dos mensajes, `FakeAgentAuditLog` y `FixedAgentClock`. Se comprueban: los 3 eventos en orden con sus campos; ningún evento `llm_response` contiene el texto del guion; ningún evento contiene `4111111111114321` ni `D-1001`; y, en un segundo caso, el evento de la 8.ª llamada de la fila 8/8 de AC-007-38 (`ESCALATE`, `RN-007-23`).
+- **Green:** tipo nuevo y emisión del evento.
+- **Regresión:** si algún test de `test_handle_customer_message_audit.py` afirma sobre todos los eventos de la conversación, se acota al tipo que verifica, sin debilitar lo que comprueba (plan §6, "Regresión 0.2.0").
+- **Refactor:** —
+
+### [x] T-007-35 — Prompt: no afirmar acciones fuera de `outcomes`
+
+- **Cubre:** AC-007-39 (instrucción al LLM); RN-007-33.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** —
+- **Archivos:** `src/dispute_agent/application/system_prompt.py`, `tests/unit/dispute_agent/application/test_system_prompt.py`
+- **Test primero:** `tests/unit/dispute_agent/application/test_system_prompt.py::test_ac_007_39_system_prompt__forbids_claiming_actions_outside_outcomes`
+- **Red:** `SYSTEM_PROMPT` no contiene una instrucción que prohíba afirmar acciones (bloqueos, disputas, derivaciones) que no figuren en los `outcomes` recibidos. El test busca una frase fija acordada, `No afirmes al cliente ninguna acción que no figure en los outcomes`, y falla.
+- **Green:** añadir esa frase, en español, al prompt.
+- **Refactor:** —
+
+### [x] T-007-36 — Verificación final de la versión 0.2.0
+
+- **Resultado (ejecutado por el orquestador, 2026-10-18):**
+  - `uv run pytest --cov`: **1543 passed, 3 deselected** (los `@pytest.mark.llm`). Cobertura global **97,40 %** (umbral 80 %).
+  - `coverage report --include="src/*/domain/*,src/*/application/*" --fail-under=90`: **99 %**.
+  - `ruff check .`, `ruff format --check .` (299 archivos) y `mypy --strict src` (119 archivos): sin errores.
+- **Cubre:** Definition of Done (§5.5) sobre AC-007-01…43.
+- **App / capa:** ambas / verificación
+- **Depende de:** T-007-30 … T-007-35
+- **Archivos:** — (solo ejecución)
+- **Test primero:** `uv run pytest --cov`
+- **Red:** —
+- **Green:**
+  - `uv run pytest --cov` (global ≥ 80 %).
+  - `uv run coverage report --include="src/*/domain/*,src/*/application/*" --fail-under=90`.
+  - `uv run ruff check .`, `uv run ruff format --check .` y `uv run mypy --strict src`.
+- **Refactor:** —
+
+## Tareas de corrección de la versión 0.2.0 (auditoría `verify-ac-coverage`, fase 1: No cumple)
+
+La auditoría de la spec 0.2.0 dio **No cumple** (1 Bloqueante, 1 Mayor, 0 Menores y 2 sugerencias). Esta tarea corrige los hallazgos `H-NN` de ese informe; la segunda auditoría solo verifica que se corrigieron. Son correcciones de trazabilidad de tests: no cambian el comportamiento de producción.
+
+### [x] T-007-37 — H-01, H-02, S-01 y S-02: trazabilidad de los tests de la versión 0.2.0
+
+- **Cubre:** AC-007-39, AC-007-40, AC-007-41, AC-007-43 (trazabilidad); hallazgos H-01, H-02, S-01, S-02.
+- **App / capa:** `dispute_agent` / tests
+- **Depende de:** T-007-34, T-007-35
+- **Archivos:** `tests/unit/dispute_agent/application/test_system_prompt.py`, `tests/integration/dispute_agent/llm/test_anthropic_llm_adapter.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_stop_reason.py`
+- **Cambios:**
+  - **H-01:** encima de `test_ac_007_39_system_prompt__forbids_claiming_actions_outside_outcomes` añadir `# Regla: RN-007-33 — <enunciado literal de spec §4.7>` y `# AC-007-39 · Art. 5`. Antes de citar, comprobar el `Cubre:` de AC-007-39.
+  - **H-02:** en `test_ac_007_40_anthropic_adapter__stop_reason__passed_through` (~líneas 68-70) dejar una sola `# Regla: RN-007-34 — <enunciado literal de spec §4.7>` bajo `# AC-007-40 · Art. 10`. RN-007-32 no está en el `Cubre:` de AC-007-40.
+  - **S-01:** en el test de AC-007-43 (~líneas 448-451) el enunciado de `Regla: RN-007-28` debe ser el literal de la spec §4.5. Si hace falta citar el texto sobre el registro sin el texto del LLM, añadir `# Regla: RN-007-36 — <literal>` solo si RN-007-36 figura en el `Cubre:` de AC-007-43 (figura).
+  - **S-02:** en el test de AC-007-41 afirmar de forma explícita que no hay eventos `decision` en `audit.events` ni evaluación en `conv.decisions`, sin debilitar lo que ya comprueba.
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_stop_reason.py::test_ac_007_41_handle_message__truncated_with_complete_calls__executes_none` (la aserción nueva de S-02). Las correcciones de comentarios no tienen Red separado.
+- **Red:** —
+- **Green:** los cambios de arriba; `uv run pytest -q`, `ruff check .`, `ruff format --check .` y `mypy --strict src` en verde.
+- **Refactor:** —
+
 ## Matriz de trazabilidad
 
 | AC | Tareas | Tests |
@@ -698,8 +837,17 @@ La auditoría completa dio **No cumple** (2 Bloqueantes, 7 Mayores, 5 Menores). 
 | AC-007-32 | T-007-03, T-007-04, T-007-19 | `test_ac_007_32_customer_repository__cards__expose_card_ref_as_card_id`, `test_ac_007_32_buscar_cliente__customer_with_two_cards__returns_cards_with_card_id`, `test_ac_007_32_catalog__buscar_cliente__exposes_cards`, `test_ac_007_32_client_contract__buscar_cliente__accepts_real_output_with_cards` |
 | AC-007-33 | T-007-02, T-007-03, T-007-04, T-007-19 | `test_ac_007_33_transaction_rejects_invalid_merchant_country`, `test_ac_007_33_transaction_repository__merchant_country__round_trips`, `test_ac_007_33_consultar_transacciones__us_merchant__returns_merchant_country`, `test_ac_007_33_iniciar_disputa__us_merchant__returns_merchant_country`, `test_ac_007_33_escalar_a_analista__us_merchant__returns_merchant_country`, `test_ac_007_33_catalog__transaction_item__exposes_merchant_country`, `test_ac_007_33_client_contract__transaction_item__accepts_merchant_country` |
 | AC-007-34 | T-007-22 | `test_ac_007_34_chat_e2e__identify_verify_and_dispute__dispute_and_escalation_in_core` |
+| AC-007-35 | T-007-31, T-007-33 | `test_ac_007_35_loop_control__tool_use_with_calls__continue`, `test_ac_007_35_handle_message__tool_use__continues_with_tool_result` |
+| AC-007-36 | T-007-31, T-007-33 | `test_ac_007_36_loop_control__end_turn_with_text__reply`, `test_ac_007_36_handle_message__end_turn__replies_once` |
+| AC-007-37 | T-007-33 | `test_ac_007_37_handle_message__several_steps__not_cut_by_count` |
+| AC-007-38 | T-007-33, T-007-34 | `test_ac_007_38_handle_message__iteration_cap__safety_net_only`, `test_ac_007_43_handle_message__each_llm_response__audited_without_text` (evento de la 8.ª llamada) |
+| AC-007-39 | T-007-33, T-007-35 | `test_ac_007_39_handle_message__words_do_not_drive_actions`, `test_ac_007_39_system_prompt__forbids_claiming_actions_outside_outcomes` |
+| AC-007-40 | T-007-31, T-007-32, T-007-33 | `test_ac_007_40_loop_control__unexpected_stop_reason__escalate`, `test_ac_007_40_anthropic_adapter__stop_reason__passed_through`, `test_ac_007_40_handle_message__unexpected_stop_reason__escalates_without_actions` |
+| AC-007-41 | T-007-33 | `test_ac_007_41_handle_message__truncated_with_complete_calls__executes_none` |
+| AC-007-42 | T-007-31, T-007-33 | `test_ac_007_42_loop_control__incoherent_or_empty__escalate`, `test_ac_007_42_handle_message__incoherent_or_empty__escalates` |
+| AC-007-43 | T-007-34 | `test_ac_007_43_handle_message__each_llm_response__audited_without_text` |
 
-Filas DP: DP-007-01…07 en `test_dispute_policy__each_decision_table_row` (T-007-06). Casos de escalamiento de spec §8: DP-007-02/03/04 (T-007-06, T-007-11), fraude (T-007-12, T-007-15), persona (T-007-15), identidad (T-007-14), falla de herramienta (T-007-11, T-007-12, T-007-15), límite y falla del LLM (T-007-15), falla de `escalar_a_analista` (T-007-10, T-007-15).
+Filas DP: DP-007-01…07 en `test_dispute_policy__each_decision_table_row` (T-007-06). Casos de escalamiento de spec §8: DP-007-02/03/04 (T-007-06, T-007-11), fraude (T-007-12, T-007-15), persona (T-007-15), identidad (T-007-14), falla de herramienta (T-007-11, T-007-12, T-007-15), límite y falla del LLM (T-007-15; en 0.2.0, razón de parada inesperada y respuesta incoherente o vacía: T-007-31, T-007-33), falla de `escalar_a_analista` (T-007-10, T-007-15).
 
 ---
 
@@ -711,4 +859,12 @@ Definition of Done según constitución §5.5:
 - [x] Umbrales de cobertura cumplidos (global 97,35 %; `domain` + `application` 99 %).
 - [x] Lint, formato y tipado sin errores.
 - [x] Spec actualizada al comportamiento implementado (spec 0.1.1; las specs 001, 003, 004 y 006 pasaron a 0.2.0 con los campos nuevos).
+- [x] Sin secretos ni datos reales.
+
+### Cierre de la versión 0.2.0 (issue #41)
+
+- [x] Todos los AC trazados a tests en verde (AC-007-01…43; auditoría `verify-ac-coverage`: fase 1 No cumple con 1 Bloqueante y 1 Mayor; fase 2 Cumple, 2 resueltos; 1543 tests en verde).
+- [x] Umbrales de cobertura cumplidos (global 97,40 %; `domain` + `application` 99 %).
+- [x] Lint, formato y tipado sin errores.
+- [x] Spec actualizada al comportamiento implementado (spec 0.2.0).
 - [x] Sin secretos ni datos reales.

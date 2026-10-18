@@ -593,7 +593,10 @@ class _EchoToolResultLLM(FakeLLM):
     ) -> LLMResponse:
         if messages and messages[-1].tool_results:
             self.requests.append(LLMRequest(system, tuple(messages), tuple(tools)))
-            return LLMResponse(text=" ".join(r.content for r in messages[-1].tool_results))
+            return LLMResponse(
+                text=" ".join(r.content for r in messages[-1].tool_results),
+                stop_reason="end_turn",
+            )
         return await super().complete(system, messages, tools)
 
 
