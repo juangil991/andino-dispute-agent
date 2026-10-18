@@ -3,10 +3,10 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Versión | 0.1.1 |
+| Versión | 0.2.0 |
 | Estado | Aprobada |
 | Fecha | 2026-10-18 |
-| Origen | Issue [#33](https://github.com/juangil991/andino-dispute-agent/issues/33) del backlog (P0) |
+| Origen | Issue [#33](https://github.com/juangil991/andino-dispute-agent/issues/33) del backlog (P0); ampliada con la issue [#41](https://github.com/juangil991/andino-dispute-agent/issues/41) (P1) en la versión 0.2.0 |
 | Plan | [plan.md](./plan.md) |
 | Tareas | [tasks.md](./tasks.md) |
 | Constitución | [docs/constitution.md](../../docs/constitution.md) |
@@ -21,6 +21,8 @@ Esta feature es la primera de `dispute_agent`. El agente atiende al cliente por 
 
 Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país del comercio de cada transacción y el `card_id` de las tarjetas del cliente localizado. Esta feature amplía de forma compatible los contratos de `buscar_cliente` y de `TransactionItem` (§7).
 
+**Versión 0.2.0 (issue #41).** En la versión 0.1.x el loop decide si sigue según la respuesta del LLM: continúa si trae peticiones de herramientas y termina si no las trae. No mira cómo terminó la respuesta. Así, una respuesta cortada por límite de longitud, un rechazo o una pausa se tratan como una respuesta final válida, y una respuesta cortada puede ejecutar las herramientas que alcanzó a pedir. La versión 0.2.0 hace que el loop decida **solo por la razón de parada** del LLM (§4.7). Un texto nunca dispara ni da por hechas acciones, y el tope de llamadas es solo una red de seguridad.
+
 ## 2. Objetivos
 
 - Atender al cliente en `POST /api/chat` con un loop de *tool use* propio sobre Claude que solo actúa sobre el core mediante las herramientas MCP (Art. 6).
@@ -31,6 +33,7 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 - Responder en español, explicando para cada transacción qué se hizo, por qué y cuáles son los próximos pasos (objetivo 1.2.5).
 - Auditar el 100 % de las decisiones, las llamadas a herramientas y los escalamientos (Art. 8).
 - Ampliar los contratos MCP con `merchant_country` y `cards` (§7) de forma compatible.
+- Continuar o terminar cada paso del loop solo según la razón de parada del LLM. Toda razón inesperada o respuesta incoherente se trata como una falla y se deriva (§4.7, Art. 10).
 
 ### Fuera de alcance
 
@@ -53,6 +56,7 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 | HU-007-05 | cliente de Banco Andino | recibir en español qué se hizo con cada cobro, por qué y qué sigue | entender el estado de mi reclamo |
 | HU-007-06 | Banco Andino | que los casos de monto alto, fuera de política, dudosos o con fallas los decida una persona y no el agente | cumplir la política de riesgo (cero resoluciones automáticas indebidas) |
 | HU-007-07 | responsable de auditoría | que cada decisión, llamada a herramienta y derivación quede registrada con su regla y su motivo, sin datos personales completos | tener trazabilidad total |
+| HU-007-08 | Banco Andino | que el agente continúe o termine la atención según cómo terminó de responder el asistente, y no por lo que diga su texto ni por un número fijo de pasos | que no se ejecuten acciones por una respuesta cortada o mal formada y que no se corten atenciones válidas |
 
 ## 4. Reglas de negocio
 
@@ -97,7 +101,7 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 | RN-007-20 | Cada transacción con decisión `ESCALATE` genera su **propia** derivación con `escalar_a_analista`, con su `transaction_id`, el `card_id` de la transacción, las acciones previas sobre ella (`DISPUTE_OPENED` con `dispute_id`, `CARD_BLOCKED`) y la nota `<ID de regla>: <motivo comunicado>` de §5. Las derivaciones sin transacción (identidad, petición de una persona, falla, límite de iteraciones, fraude sin transacción) se registran una sola vez por causa. Cada derivación usa una `idempotency_key` propia, que solo se reutiliza para reintentar esa misma solicitud. | Clarificación 2026-10-18; RN-006-09 |
 | RN-007-21 | Si `consultar_transacciones`, `iniciar_disputa` o `bloquear_tarjeta` devuelven `INTERNAL`, no responden dentro del tiempo límite o devuelven una respuesta que no cumple su esquema, el agente no da la acción por realizada. Deriva con `UNRECOVERABLE_SYSTEM_FAILURE`, con la transacción o la tarjeta afectada si la identidad está verificada, informa al cliente sin detalles técnicos y cierra la conversación. Solo se reintenta un error con `retryable = true`. | Art. 10; `mcp-client.md` §2 y §4; RN-004-15; RN-005-13 |
 | RN-007-22 | Si `escalar_a_analista` devuelve `INTERNAL` o falla, el agente no reintenta automáticamente. Informa al cliente que su caso no pudo derivarse y que vuelva a contactar al banco, lo audita y cierra la conversación. Si devuelve `IDENTITY_NOT_VERIFIED`, repite la solicitud sin datos del cliente. | RN-006-15; spec 006 §7 |
-| RN-007-23 | El loop admite como máximo **8** llamadas al LLM por cada mensaje del cliente (configurable). Al superarlo, o si el LLM falla o devuelve una salida inválida, el agente no ejecuta ninguna acción pendiente de ese turno. Deriva con `INCONCLUSIVE_RULES` si se superó el límite, o con `UNRECOVERABLE_SYSTEM_FAILURE` si falló el LLM, informa al cliente con un mensaje fijo y cierra la conversación. | §3.5.6; Art. 10; clarificación 2026-10-18 |
+| RN-007-23 | El loop admite como máximo **8** llamadas al LLM por cada mensaje del cliente (configurable). Ese máximo es solo una red de seguridad: el loop no termina por contar llamadas, sino por la razón de parada (RN-007-32). Si la llamada número 8 termina pidiendo herramientas, se considera superado el límite. El agente tampoco sigue si el LLM falla o devuelve una salida inválida, lo que incluye una razón de parada inesperada o una respuesta incoherente o vacía (RN-007-34, RN-007-35). En esos casos no ejecuta ninguna acción pendiente de ese turno. Deriva con `INCONCLUSIVE_RULES` si se superó el límite, o con `UNRECOVERABLE_SYSTEM_FAILURE` si falló el LLM o su salida es inválida. Informa al cliente con un mensaje fijo y cierra la conversación. | §3.5.6; Art. 10; clarificación 2026-10-18; issue #41 |
 | RN-007-24 | Una conversación se **cierra** tras derivar por petición de una persona (RN-007-18/19), fraude sin identidad (RN-007-17), identificación fallida (RN-007-04/05), falla del sistema (RN-007-21/22) o límite de iteraciones (RN-007-23). En una conversación cerrada, el agente no llama al LLM ni a ninguna herramienta y responde con el mensaje fijo `Tu caso ya fue derivado a un analista. Una persona continuará la atención.` Las derivaciones de una transacción por DP-007-02/03/04/06/07 **no** cierran la conversación. | Clarificación 2026-10-18 |
 
 ### 4.5 Respuesta, protección de datos y auditoría
@@ -107,7 +111,7 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 | RN-007-25 | Cada respuesta de `POST /api/chat` incluye el texto redactado por el LLM (`reply`) y la lista estructurada `outcomes` con lo ocurrido en el turno (§7.3): por cada acción o decisión, su tipo, la transacción o tarjeta enmascarada, la regla aplicada, el motivo y los próximos pasos, ambos en español y con el texto fijo de §5 o de §7.3. El LLM recibe esos `outcomes` para redactar la respuesta, pero no puede alterarlos. | Objetivo 1.2.5; Art. 5; issue #33 |
 | RN-007-26 | Antes de enviarse, el `reply` pasa por un filtro determinista. Toda secuencia de 13 a 19 dígitos seguidos (incluso separados por espacios o guiones) se sustituye por `[REDACTED]`. Todo documento que el cliente haya aportado en la conversación se sustituye por su forma enmascarada (RN-001-09). Las tarjetas solo aparecen como `**** NNNN`. El filtro también se aplica a `outcomes`. | Art. 7; clarificación 2026-10-18; RN-001-09 |
 | RN-007-27 | El texto devuelto por una herramienta (p. ej. `merchant` o la `note` de una derivación) se trata como dato y nunca como instrucción: no cambia las decisiones de `DisputePolicy` ni habilita acciones. | Art. 5; `mcp-client.md` §6 |
-| RN-007-28 | Cada evento genera un registro de auditoría en `AuditLogPort`, en JSON. Hay tres tipos de evento: llamada a herramienta (incluidas las bloqueadas), decisión de `DisputePolicy` y derivación o cierre. Cada registro lleva `conversation_id`, marca de tiempo del reloj inyectado, tipo de evento, entrada, salida, regla aplicada (`DP-007-XX` o `RN-007-XX`) y motivo. Ningún registro contiene un número completo de tarjeta ni un documento completo: se aplica el filtro de RN-007-26. | Art. 8; `mcp-client.md` §5; issue #33 |
+| RN-007-28 | Cada evento genera un registro de auditoría en `AuditLogPort`, en JSON. Hay cuatro tipos de evento: llamada a herramienta (incluidas las bloqueadas), decisión de `DisputePolicy`, derivación o cierre, y respuesta del LLM (RN-007-36). Cada registro lleva `conversation_id`, marca de tiempo del reloj inyectado, tipo de evento, entrada, salida, regla aplicada (`DP-007-XX` o `RN-007-XX`) y motivo. Ningún registro contiene un número completo de tarjeta ni un documento completo: se aplica el filtro de RN-007-26. | Art. 8; `mcp-client.md` §5; issue #33 |
 | RN-007-29 | "Hoy" y las marcas de tiempo salen de un `Clock` inyectado en `America/Bogota`. El LLM se inyecta por `LLMPort`; la suite por defecto usa un `FakeLLM` guionizado (§5.3.1). | §5.3.1; §5.3.6 |
 
 ### 4.6 Ampliaciones de contrato del core
@@ -116,6 +120,16 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 |---|---|---|
 | RN-007-30 | `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia). Aparece en todas las respuestas que incluyen `TransactionItem` (`consultar_transacciones`, `iniciar_disputa`, `escalar_a_analista`). Toda transacción del core tiene país, también en las semillas. | Clarificación 2026-10-18 |
 | RN-007-31 | Cada cliente devuelto por `buscar_cliente` incorpora `cards`: lista de `{card_id, masked_card}` de sus tarjetas en cualquier estado, en el mismo orden que `masked_cards`, que no cambia. `card_id` es el mismo identificador opaco que usan `consultar_transacciones` y `bloquear_tarjeta`. No incluye el estado ni el número de la tarjeta. | Clarificación 2026-10-18; RN-001-08 |
+
+### 4.7 Ciclo del agente según la razón de parada (versión 0.2.0)
+
+| ID | Regla | Fuente / justificación |
+|---|---|---|
+| RN-007-32 | Cada respuesta del LLM trae su **razón de parada**, y el agente decide solo por ella si continúa o responde. Con `tool_use`, ejecuta las herramientas pedidas, siempre a través de las guardas de las reglas anteriores. Devuelve al LLM un resultado por cada petición en la misma llamada siguiente, también para las bloqueadas o fallidas. Con `end_turn`, envía al cliente el texto de la respuesta, tras el filtro de RN-007-26, y no invoca más herramientas ni llama otra vez al LLM en ese turno. El número de llamadas, salvo el tope de RN-007-23, y el contenido del texto no influyen en esta decisión. | Issue #41; `agent-behavior.md` §1–3; §3.5 |
+| RN-007-33 | El texto del LLM nunca se interpreta para ejecutar acciones ni para darlas por hechas. Solo se ejecutan las peticiones estructuradas de herramientas de una respuesta `tool_use`. Lo que el sistema realizó en el turno consta en `outcomes`, que solo contiene lo ejecutado. El `reply` no se filtra por palabras. Las instrucciones al LLM le piden no afirmar acciones que no figuren en los `outcomes` recibidos. | Issue #41; Art. 5; clarificación 2026-10-18 (v0.2.0) |
+| RN-007-34 | Una razón de parada distinta de `tool_use` y `end_turn` es una salida inválida. Esto incluye `max_tokens` (respuesta cortada por límite de longitud), `refusal` (rechazo), `pause_turn` (pausa sin terminar), `stop_sequence`, cualquier otro valor y la ausencia de razón. El agente no ejecuta **ninguna** de las herramientas pedidas en esa respuesta, ni siquiera las que llegaron completas, y aplica RN-007-23 como falla del LLM: deriva con `UNRECOVERABLE_SYSTEM_FAILURE`, responde con el mensaje fijo de `LLM_FAILURE` y cierra la conversación. | Issue #41; Art. 10; `agent-behavior.md` §1 |
+| RN-007-35 | Una respuesta con una razón de parada válida pero incoherente o vacía también es una salida inválida, con el mismo tratamiento de RN-007-34. Son tres casos: `tool_use` sin ninguna petición de herramienta, `end_turn` con peticiones de herramientas (que no se ejecutan), y `end_turn` sin texto o solo con espacios. | Issue #41; clarificación 2026-10-18 (v0.2.0); Art. 10 |
+| RN-007-36 | Por cada respuesta del LLM queda un registro de auditoría de tipo respuesta del LLM (RN-007-28). Lleva el número de la llamada en el turno, la razón de parada recibida, la decisión del agente (`CONTINUE`, `REPLY` o `ESCALATE`), el número y los nombres de las herramientas pedidas, y la regla aplicada: `RN-007-32` al continuar o responder, `RN-007-34` o `RN-007-35` ante una salida inválida y `RN-007-23` al superar el límite. No incluye el texto del LLM ni los argumentos de las herramientas, que se auditan en sus propios eventos (RN-007-28). | Issue #41; Art. 8; clarificación 2026-10-18 (v0.2.0) |
 
 ## 5. Tabla de decisión de `DisputePolicy`
 
@@ -145,7 +159,7 @@ Estas condiciones aplican a todos los criterios, salvo que se indique otra cosa:
 - Existe la cliente `C-0001` "Laura Méndez", con documento `D-1001` y la tarjeta `CARD-L1`, `ACTIVE`, número `4111111111114321` (terminada en `4321`).
 - "Verificada" significa que en la conversación `verificar_identidad` ya respondió `verified = true` para `C-0001`.
 - Una transacción "de X COP nacional hace N días" es `CONFIRMED`, de `CARD-L1`, con `currency = "COP"`, `merchant_country = "CO"` y `occurred_at` a las 12:00 de Bogotá de hace N días. "Del exterior" significa `merchant_country = "US"`. Si no se indica la antigüedad, es de hace 7 días.
-- El LLM es un `FakeLLM` guionizado. Su guion interpreta el mensaje del cliente (motivo, fraude, petición de una persona) y pide las herramientas. Los criterios verifican lo que hace el agente con esas peticiones.
+- El LLM es un `FakeLLM` guionizado. Su guion interpreta el mensaje del cliente (motivo, fraude, petición de una persona) y pide las herramientas. Los criterios verifican lo que hace el agente con esas peticiones. Cada respuesta del guion trae su razón de parada. Si un criterio no la indica, una respuesta con peticiones de herramientas termina con `tool_use` y una sin ellas termina con `end_turn` y un texto no vacío.
 - Los criterios de agente se verifican contra un `BankingToolsPort` falso (unitarios) y, donde se indica, contra el servidor MCP real por stdio (e2e). Los datos se construyen con builders (§5.3.7).
 
 ### AC-007-01 — Resolver una disputa de monto bajo en la misma conversación
@@ -613,6 +627,129 @@ Cubre: HU-007-01, HU-007-06, RN-007-01, RN-007-03, RN-007-20, DP-007-03, DP-007-
 - **Then** en el core queda 1 disputa `OPEN` sobre `TX-L1` y 1 derivación `PENDING` con `AMOUNT_OVER_THRESHOLD` y `TX-L2`
 - **And** la respuesta trae `DISPUTE_OPENED` y `ESCALATED` en `outcomes`, y `status = "ACTIVE"`
 
+### AC-007-35 — El asistente pide consultar información y el agente continúa
+
+Cubre: HU-007-08, RN-007-32
+
+- **Given** la cliente está verificada. La 1.ª respuesta del guion termina con `tool_use` y pide `consultar_transacciones` con `card_last4 = "4321"`. La 2.ª termina con `end_turn` y el texto `Encontré tus movimientos.`
+- **When** la cliente pide ver sus movimientos
+- **Then** `consultar_transacciones` se invoca una sola vez
+- **And** la 2.ª llamada al LLM recibe un `tool_result` con el resultado de esa consulta, enlazado a su petición
+- **And** el `reply` es `Encontré tus movimientos.`, el LLM se llamó exactamente 2 veces y la conversación sigue `status = "ACTIVE"`
+
+### AC-007-36 — El asistente termina su turno y el agente responde al cliente
+
+Cubre: HU-007-08, RN-007-32
+
+- **Given** la cliente está verificada y la 1.ª respuesta del guion termina con `end_turn` y el texto `¿Qué cobro quieres revisar?`
+- **When** la cliente envía un mensaje
+- **Then** el `reply` es `¿Qué cobro quieres revisar?`
+- **And** el LLM se llamó una sola vez, no se invocó ninguna herramienta y la conversación sigue `status = "ACTIVE"`
+
+### AC-007-37 — Una atención con varios pasos no se corta por el número de pasos
+
+Cubre: HU-007-08, RN-007-23, RN-007-32
+
+- **Given** la cliente fue localizada pero no está verificada. El guion responde con `tool_use` en 3 llamadas seguidas: `verificar_identidad`, luego `consultar_transacciones` y luego `evaluar_disputa` sobre `TX-L1`, de 85.000 COP nacional. En la 4.ª llamada responde con `end_turn` y un texto
+- **When** la cliente envía sus datos de verificación y dice que no reconoce `TX-L1`
+- **Then** se ejecutan las 3 peticiones en ese orden y se invoca `iniciar_disputa` sobre `TX-L1` (DP-007-05)
+- **And** el `reply` es el texto de la 4.ª llamada, no se invoca `escalar_a_analista` y la conversación sigue `status = "ACTIVE"`
+
+### AC-007-38 — El máximo de pasos es solo una red de seguridad
+
+Cubre: HU-007-08, RN-007-23, RN-007-32
+
+- **Given** el máximo de llamadas al LLM por mensaje es `<máximo>`, la cliente está verificada y el guion responde con `tool_use`, pidiendo `consultar_transacciones`, en `<pasos>` llamadas seguidas. Si el agente hace una llamada más, el guion responde con `end_turn` y un texto
+- **When** la cliente envía un mensaje
+- **Then** `<resultado>`
+
+| máximo | pasos | resultado |
+|---|---|---|
+| 8 | 7 | se ejecutan las 7 consultas, el LLM se llama 8 veces, el `reply` es el texto de la 8.ª llamada y la conversación sigue `ACTIVE` |
+| 8 | 8 | se ejecutan solo las 7 primeras consultas y la petición de la 8.ª no se ejecuta. Se deriva con `INCONCLUSIVE_RULES`, `outcomes` trae `ITERATION_LIMIT`, el `reply` es su mensaje fijo y la conversación queda `ESCALATED` |
+| 8 | 9 | igual que la fila anterior: el LLM se llama solo 8 veces y nunca una 9.ª |
+| 3 | 2 | se ejecutan las 2 consultas, el LLM se llama 3 veces y la conversación sigue `ACTIVE` (el máximo es configurable) |
+
+### AC-007-39 — Las palabras del texto no deciden si el agente continúa ni qué hizo
+
+Cubre: HU-007-08, RN-007-32, RN-007-33
+
+- **Given** la cliente está verificada y la 1.ª respuesta del guion termina con `end_turn`, sin peticiones de herramientas, y el texto `<texto>`
+- **When** la cliente envía un mensaje
+- **Then** el `reply` es `<texto>` y el LLM se llamó una sola vez
+- **And** no se invoca ninguna herramienta: ni `consultar_transacciones`, ni `bloquear_tarjeta`, ni `iniciar_disputa`, ni `escalar_a_analista`
+- **And** `outcomes` está vacía (no trae `CARD_BLOCKED` ni ninguna otra acción) y la conversación sigue `status = "ACTIVE"`
+
+| texto |
+|---|
+| `Voy a consultar sus movimientos.` |
+| `Ya bloqueé su tarjeta.` |
+
+Además, las instrucciones de sistema que recibe el LLM le piden no afirmar acciones que no figuren en los `outcomes` recibidos (RN-007-33).
+
+### AC-007-40 — El asistente termina de forma inesperada
+
+Cubre: HU-007-06, HU-007-08, RN-007-23, RN-007-24, RN-007-34
+
+- **Given** la cliente está verificada y la 1.ª respuesta del guion trae la razón de parada `<razón>`, con el texto `Ya abrí tu disputa.`
+- **When** la cliente envía un mensaje
+- **Then** no se invoca `consultar_transacciones`, `iniciar_disputa` ni `bloquear_tarjeta`
+- **And** se invoca `escalar_a_analista` una vez con `reason = "UNRECOVERABLE_SYSTEM_FAILURE"`
+- **And** `outcomes` trae `LLM_FAILURE`, el `reply` es `Tuvimos un problema al procesar tu solicitud. Una persona continuará la atención.` y no contiene el texto del guion
+- **And** la conversación queda `status = "ESCALATED"` y el LLM no se vuelve a llamar en ese turno
+
+| razón |
+|---|
+| `max_tokens` (respuesta cortada por límite de longitud) |
+| `refusal` (rechazo a responder) |
+| `pause_turn` (pausa sin terminar) |
+| `stop_sequence` |
+| un valor desconocido, p. ej. `other_reason` |
+| ausente |
+
+### AC-007-41 — Una respuesta cortada que pedía acciones no ejecuta ninguna
+
+Cubre: HU-007-08, RN-007-34
+
+- **Given** la cliente está verificada y `TX-L1` es de 85.000 COP nacional, ya consultada en la conversación. La respuesta del guion trae `max_tokens` y dos peticiones completas: `evaluar_disputa` sobre `TX-L1` y `reportar_fraude` con `card_last4 = "4321"`
+- **When** la cliente envía un mensaje
+- **Then** no se ejecuta ninguna de las dos peticiones: `DisputePolicy` no evalúa `TX-L1`, y no se invoca `iniciar_disputa` ni `bloquear_tarjeta`
+- **And** `outcomes` no trae `DISPUTE_OPENED` ni `CARD_BLOCKED`, sino `LLM_FAILURE`. Se invoca `escalar_a_analista` con `reason = "UNRECOVERABLE_SYSTEM_FAILURE"` y la conversación queda `status = "ESCALATED"`
+
+### AC-007-42 — Respuestas incoherentes o vacías
+
+Cubre: HU-007-08, RN-007-24, RN-007-35
+
+- **Given** la cliente está verificada y la 1.ª respuesta del guion es `<respuesta>`
+- **When** la cliente envía un mensaje
+- **Then** no se ejecuta ninguna herramienta pedida en esa respuesta
+- **And** se invoca `escalar_a_analista` con `reason = "UNRECOVERABLE_SYSTEM_FAILURE"`, `outcomes` trae `LLM_FAILURE`, el `reply` es el mensaje fijo de `LLM_FAILURE` y la conversación queda `status = "ESCALATED"`
+
+| respuesta |
+|---|
+| `end_turn` sin texto ni peticiones de herramientas |
+| `end_turn` con texto formado solo por espacios y saltos de línea |
+| `end_turn` con texto y una petición de `consultar_transacciones` |
+| `tool_use` sin ninguna petición de herramienta |
+
+### AC-007-43 — Queda registro de cómo terminó cada respuesta del asistente
+
+Cubre: HU-007-07, HU-007-08, RN-007-28, RN-007-36
+
+- **Given** un reloj inyectado fijo, la cliente verificada y aportó el documento `D-1001`. En el 1.er mensaje el guion responde con `tool_use`, pidiendo `consultar_transacciones`, y después con `end_turn` y un texto que contiene `4111111111114321` y `D-1001`. En el 2.º mensaje responde con `max_tokens`
+- **When** la cliente envía los dos mensajes
+- **Then** quedan exactamente 3 registros de auditoría de respuesta del LLM, en orden, cada uno con `conversation_id`, la marca de tiempo del reloj, el número de la llamada, la razón de parada, la decisión, las herramientas pedidas y la regla:
+
+| llamada | razón de parada | decisión | herramientas pedidas | regla |
+|---|---|---|---|---|
+| 1.ª del 1.er mensaje | `tool_use` | `CONTINUE` | `["consultar_transacciones"]` | `RN-007-32` |
+| 2.ª del 1.er mensaje | `end_turn` | `REPLY` | `[]` | `RN-007-32` |
+| 1.ª del 2.º mensaje | `max_tokens` | `ESCALATE` | `[]` | `RN-007-34` |
+
+- **And** ningún registro de respuesta del LLM contiene el texto del asistente
+- **And** ningún registro de auditoría de la conversación contiene `4111111111114321` ni `D-1001`
+- **And** al superar el límite de llamadas (AC-007-38, fila 8/8), el registro de la 8.ª llamada tiene la decisión `ESCALATE` y la regla `RN-007-23`
+
 ## 7. Contratos de herramientas MCP
 
 ### 7.1 `buscar_cliente` (modificada, compatible)
@@ -686,7 +823,7 @@ Tipos y textos fijos (los de las decisiones de `DisputePolicy` están en §5):
 | `REFINEMENT_REQUIRED` | RN-007-13 | `Hay demasiadas transacciones en el periodo indicado.` | `Indícanos un periodo más corto para buscar el cobro.` |
 | `ESCALATED` (sin transacción) | RN-007-04/05/15/17/18/19/21 | `Tu caso requiere la revisión de una persona.` | `Una persona continuará la atención.` |
 | `ITERATION_LIMIT` | RN-007-23 | `No pudimos completar tu solicitud automáticamente.` | `Una persona continuará la atención.` |
-| `LLM_FAILURE` | RN-007-23 | `Tuvimos un problema al procesar tu solicitud.` | `Una persona continuará la atención.` |
+| `LLM_FAILURE` | RN-007-23 / RN-007-34 / RN-007-35 | `Tuvimos un problema al procesar tu solicitud.` | `Una persona continuará la atención.` |
 | `ESCALATION_FAILED` | RN-007-22 | `No pudimos derivar tu caso a un analista en este momento.` | `Por favor, vuelve a contactar al banco más tarde.` |
 
 En `ITERATION_LIMIT` y `LLM_FAILURE`, el `reply` es la concatenación fija de `reason` y `next_steps`, sin pasar por el LLM.
@@ -717,7 +854,7 @@ Las fallas del LLM y del core **no** son errores HTTP: se tratan como derivació
 | Cliente no localizado tras 2 búsquedas (RN-007-05) | `INSUFFICIENT_OR_CONTRADICTORY_INFO` | Limitado | Sí |
 | Falla no recuperable de una herramienta: `INTERNAL`, tiempo límite o respuesta inválida (RN-007-21) | `UNRECOVERABLE_SYSTEM_FAILURE` | `transaction_id` o `card_id` afectado si está verificada; nota con la herramienta y el código, sin detalles internos | Sí |
 | Límite de 8 llamadas al LLM superado (RN-007-23) | `INCONCLUSIVE_RULES` | Completo sin transacción si está verificada, limitado si no | Sí |
-| Falla o salida inválida del LLM (RN-007-23) | `UNRECOVERABLE_SYSTEM_FAILURE` | Completo sin transacción si está verificada, limitado si no | Sí |
+| Falla o salida inválida del LLM, incluidas una razón de parada inesperada (`max_tokens`, `refusal`, `pause_turn`…) y una respuesta incoherente o vacía (RN-007-23, RN-007-34, RN-007-35) | `UNRECOVERABLE_SYSTEM_FAILURE` | Completo sin transacción si está verificada, limitado si no | Sí |
 | `escalar_a_analista` devuelve `INTERNAL` (RN-007-22) | — | No hay derivación posible: se informa al cliente sin reintentar | Sí |
 
 Ningún resumen ni nota contiene el número completo de una tarjeta, el documento ni el nombre del cliente (RN-006-13, RN-007-26).
@@ -737,6 +874,10 @@ Ningún resumen ni nota contiene el número completo de una tarjeta, el document
 | 2026-10-18 | ¿Cómo se registran las derivaciones de varias transacciones? | Una derivación por transacción; las causas sin transacción, una sola vez. | RN-007-20, AC-007-05, §8 |
 | 2026-10-18 | ¿Qué ocurre tras derivar por petición de una persona, identidad o falla? | La conversación queda cerrada: no se llama más al LLM ni a herramientas y se responde un mensaje fijo. La petición de una persona se deriva con `OTHER` y una nota. | RN-007-18, RN-007-24, AC-007-12, AC-007-26, §8 |
 | 2026-10-18 | ¿Cómo se cierra el hallazgo H-04 de la auditoría de cobertura de AC (RN-007-10 sin AC que la cubra) y la ambigüedad de la fila 2 de AC-007-25? | RN-007-10 pasa al `Cubre:` de AC-007-01, con un criterio observable (sin motivo o con un motivo fuera de catálogo, la disputa se abre con `UNRECOGNIZED_CHARGE`). La fila 2 de AC-007-25 se reescribe: 7 llamadas con herramientas y respuesta final en la 8.ª. No cambia ningún comportamiento. | RN-007-10, AC-007-01, AC-007-25 |
+| 2026-10-18 | (v0.2.0, issue #41) Si el texto del asistente dice «ya bloqueé su tarjeta» sin que el sistema lo hiciera, ¿cómo se evita afirmar al cliente una acción no realizada, sin interpretar el texto por palabras? | La fuente de verdad de lo realizado es `outcomes`, que solo trae lo que el sistema ejecutó. El `reply` no se filtra por palabras. Las instrucciones al LLM le piden no afirmar acciones fuera de `outcomes`. | RN-007-33, AC-007-39 |
+| 2026-10-18 | (v0.2.0) ¿Qué ocurre si la razón de parada y el contenido no concuerdan (`tool_use` sin herramientas, `end_turn` con herramientas)? | Es una salida inválida: no se ejecuta nada, se deriva con `UNRECOVERABLE_SYSTEM_FAILURE`, se responde con el mensaje fijo y se cierra la conversación. | RN-007-35, AC-007-42, §8 |
+| 2026-10-18 | (v0.2.0) ¿Qué guarda el registro de auditoría de cada respuesta del asistente? | La razón de parada, la decisión del agente, el número y los nombres de las herramientas pedidas y la regla. Nunca el texto del asistente. | RN-007-28, RN-007-36, AC-007-43 |
+| 2026-10-18 | (v0.2.0) ¿Este comportamiento va en una spec nueva o en la 007? | Se actualiza la spec 007 (spec viva, versión 0.2.0), que es la que define el loop. | Toda la spec (§1, §2, §3, §4.4, §4.7, §6, §7.3, §8) |
 
 ## 10. Preguntas abiertas
 
@@ -750,6 +891,8 @@ Ninguna.
 | 0.1.0 | 2026-10-18 | Spec aprobada por el usuario | Juangiov |
 | 0.1.1 | 2026-10-18 | Auditoría de cobertura de AC (fase 1): RN-007-10 entra en el `Cubre:` de AC-007-01 con su criterio observable y se aclara la fila 2 de AC-007-25. Sin cambios de comportamiento. | Juangiov (con Claude Code) |
 | 0.1.1 | 2026-10-18 | Spec 0.1.1 aprobada por el usuario | Juangiov |
+| 0.2.0 | 2026-10-18 | Issue #41: el loop continúa o termina solo según la razón de parada del LLM. Se añaden HU-007-08, §4.7 (RN-007-32 a RN-007-36) y AC-007-35 a AC-007-43. Se precisan RN-007-23 (el tope es una red de seguridad; la salida inválida incluye razones de parada inesperadas y respuestas incoherentes) y RN-007-28 (un cuarto tipo de evento de auditoría), y se actualizan §7.3 y §8. | Juangiov (con Claude Code) |
+| 0.2.0 | 2026-10-18 | Spec 0.2.0 aprobada por el usuario | Juangiov |
 
 ---
 

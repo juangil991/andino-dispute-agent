@@ -3,10 +3,10 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Versión | 0.1.0 |
+| Versión | 0.2.0 |
 | Estado | Aprobado |
 | Fecha | 2026-10-18 |
-| Spec | [spec.md](./spec.md) — versión 0.1.0 aprobada |
+| Spec | [spec.md](./spec.md) — versión 0.2.0 aprobada |
 | Tareas | [tasks.md](./tasks.md) |
 | Constitución | 1.0.1 |
 
@@ -73,6 +73,34 @@ Decisiones triviales tomadas:
   - Tras verificar, el LLM recibe las tarjetas enmascaradas (`**** NNNN`), nunca `card_id`.
 - **Actualización de specs previas (§4.3.3):** las specs 001, 003, 004 y 006 se actualizan en esta feature (versión 0.2.0, fila de historial). Las tablas de salida y RN-001-08 / RN-003-12 reflejan los campos nuevos.
 
+### 1.1 Cambios de la versión 0.2.0 (spec 0.2.0, issue #41)
+
+Solo cambia `dispute_agent`. El core, los contratos MCP y el dominio quedan igual.
+
+- **`LLMResponse.stop_reason: str | None = None`** (puerto `LLMPort`). `AnthropicLLMAdapter` copia `response.stop_reason` del SDK tal cual llega. Puede ser `tool_use`, `end_turn`, `max_tokens`, `refusal`, `pause_turn`, `stop_sequence`, otro valor o `None`.
+- **Clasificador puro `classify_llm_response(response) -> LoopVerdict`** en `application/loop_control.py`. Devuelve `LoopVerdict(step, rule, why)` con `step ∈ {CONTINUE, REPLY, ESCALATE}` (`LoopStep`), según esta tabla:
+
+  | stop_reason | herramientas pedidas | texto | step | regla |
+  |---|---|---|---|---|
+  | `tool_use` | ≥ 1 | cualquiera | `CONTINUE` | RN-007-32 |
+  | `tool_use` | 0 | cualquiera | `ESCALATE` | RN-007-35 |
+  | `end_turn` | 0 | no vacío tras `strip()` | `REPLY` | RN-007-32 |
+  | `end_turn` | 0 | vacío o solo espacios | `ESCALATE` | RN-007-35 |
+  | `end_turn` | ≥ 1 | cualquiera | `ESCALATE` | RN-007-35 |
+  | otro valor o `None` | cualquiera | cualquiera | `ESCALATE` | RN-007-34 |
+
+  Vive en `application` y no en `domain` porque clasifica una respuesta del protocolo del LLM, no una decisión de negocio sobre disputas (Art. 5). Es stdlib pura y se prueba con una tabla parametrizada.
+- **Loop de `HandleCustomerMessage._run_loop`.** En cada respuesta: (1) clasifica; (2) si el resultado es `CONTINUE` y es la llamada número `max_iterations`, lo convierte en `ESCALATE` con `RN-007-23`; (3) audita un evento `llm_response`; (4) actúa. Con `REPLY` devuelve el texto. Con `CONTINUE` ejecuta las peticiones como hasta ahora. Con `ESCALATE` lanza `IterationLimitExceeded` o `LLMOutputError(rule=…)` **antes de parsear o ejecutar ninguna petición**, de modo que una respuesta cortada no ejecuta ni las peticiones completas (RN-007-34). Desaparece el criterio actual de terminación "sin `tool_calls` ⇒ respuesta final".
+- **`LLMOutputError` lleva la regla** (`RN-007-23` por defecto, o `RN-007-34` / `RN-007-35`). `_fail_turn` la usa en el `rule` del `Outcome` `LLM_FAILURE` y en la auditoría del cierre. La derivación, el mensaje fijo y el cierre no cambian (RN-007-23).
+- **Auditoría (RN-007-36).** `AuditEventType` gana `"llm_response"`. El evento lleva `tool=None`, `input={"call": n}`, `output={"stop_reason", "decision", "tool_call_count", "tool_calls": [nombres]}`, `rule` y `reason` (texto fijo por regla). Nunca guarda el texto del LLM ni los argumentos. `JsonAuditLog` no cambia: ya serializa cualquier `event_type`.
+- **Prompt del sistema (RN-007-33).** Gana una instrucción: no afirmar al cliente acciones (bloqueos, disputas, derivaciones) que no figuren en los `outcomes` recibidos. El `reply` no se filtra por palabras.
+
+Decisiones triviales tomadas:
+
+- **`FakeLLM` infiere la razón de parada** cuando el guion no la trae (`stop_reason=None`): `tool_use` si hay peticiones y `end_turn` si no las hay. Es la convención de la spec (§6, condiciones comunes) y evita reescribir los guiones existentes de los AC-007-01 a 34. Con `FakeLLM(script, infer_stop_reason=False)`, `None` llega tal cual al caso de uso, para la fila "ausente" de AC-007-40.
+- **Constructores de guion** `tool_use_response(*calls, text="")` y `end_turn_response(text)` en `tests/fakes/fake_llm.py`, para los tests nuevos.
+- **Sin configuración nueva:** `llm_max_iterations` ya es configurable (`AgentSettings`, `create_app`).
+
 ## 2. Componentes por capa
 
 Rutas relativas a `src/<app>/`.
@@ -112,14 +140,25 @@ Rutas relativas a `src/<app>/`.
 | `dispute_agent` | arranque | `config.py` — `AgentSettings` | Nuevo | `pydantic-settings`: `anthropic_api_key` (`SecretStr`), `anthropic_model = "claude-sonnet-5-5"`, `llm_max_iterations = 8`, `usd_cop_rate = Decimal(4000)`, `mcp_call_timeout_seconds = 10`, `core_database_url` (se pasa al subproceso). |
 | `dispute_agent` | arranque | `main.py` — `create_app(settings, banking=None, llm=None)` | Nuevo | Composición. El `lifespan` abre y cierra el adaptador MCP; los parámetros opcionales permiten inyectar fakes. |
 
+**Cambios de la versión 0.2.0** (todos en `dispute_agent`):
+
+| Capa | Componente | Nuevo / Modificado | Cambio |
+|---|---|---|---|
+| `application` | `application/ports/llm.py` — `LLMResponse` | Modificado | Campo `stop_reason: str \| None = None` al final (RN-007-32). |
+| `application` | `application/loop_control.py` — `LoopStep`, `LoopVerdict`, `classify_llm_response` | Nuevo | Tabla de §1.1, stdlib pura (RN-007-32, 34 y 35). |
+| `application` | `application/ports/audit_log.py` — `AuditEventType` | Modificado | Añade `"llm_response"` (RN-007-28, RN-007-36). |
+| `application` | `application/use_cases/handle_customer_message.py` — `HandleCustomerMessage`, `LLMOutputError` | Modificado | Loop guiado por `classify_llm_response`. Tope convertido en `ESCALATE` con `RN-007-23`. Evento `llm_response` por respuesta. Ninguna petición se parsea ni se ejecuta con `ESCALATE`. `LLMOutputError(rule)` y `_fail_turn` usan esa regla (RN-007-23, 32 a 36). |
+| `application` | `application/system_prompt.py` | Modificado | Instrucción de no afirmar acciones que no figuren en `outcomes` (RN-007-33). |
+| `infrastructure/outbound` | `infrastructure/outbound/llm/anthropic_llm_adapter.py` — `AnthropicLLMAdapter` | Modificado | Copia `response.stop_reason` en `LLMResponse.stop_reason`. |
+
 ## 3. Puertos y adaptadores
 
 | Puerto | Nuevo / Modificado | Adaptador(es) | Notas |
 |---|---|---|---|
-| `LLMPort` | Nuevo | `AnthropicLLMAdapter` | `FakeLLM` guionizado en `tests/fakes/` (§5.3.1). |
+| `LLMPort` | Nuevo (modificado en 0.2.0: `LLMResponse.stop_reason`) | `AnthropicLLMAdapter` | `FakeLLM` guionizado en `tests/fakes/` (§5.3.1); en 0.2.0 infiere la razón de parada si el guion no la trae (desactivable). |
 | `BankingToolsPort` | Nuevo | `McpStdioBankingAdapter` | `FakeBankingTools` programable por herramienta (respuesta o error) y con registro de llamadas. |
 | `ConversationRepository` | Nuevo | `InMemoryConversationRepository` | `get(id) -> Conversation \| None`, `save(conv)`. |
-| `AuditLogPort` (agente) | Nuevo | `JsonAuditLog` | `AgentAuditEvent(conversation_id, at, event_type, tool, input, output, rule, reason)` con `event_type ∈ {tool_call, tool_blocked, decision, escalation, conversation_closed}`. `FakeAgentAuditLog` en los tests. |
+| `AuditLogPort` (agente) | Nuevo | `JsonAuditLog` | `AgentAuditEvent(conversation_id, at, event_type, tool, input, output, rule, reason)` con `event_type ∈ {tool_call, tool_blocked, decision, escalation, conversation_closed, llm_response}` (`llm_response` desde 0.2.0). `FakeAgentAuditLog` en los tests. |
 | `Clock` (agente) | Nuevo | `SystemClock` | `FixedAgentClock` en los tests. |
 | `IdGenerator` | Nuevo | `Uuid4Generator` | `SequentialIdGenerator` en los tests. |
 | `CustomerRepository`, `TransactionRepository` (core) | Sin cambio de firma | SQLAlchemy | Solo mapean los campos nuevos. |
@@ -220,6 +259,15 @@ Niveles por carpeta:
 | AC-007-32 | `SearchCustomers` sin cambios de dominio; `Card.card_id` de los builders | `buscar_cliente` vía sesión MCP con SQLite: `cards` en el orden de `masked_cards`, sin estado ni PAN; con `refinement_required` no hay clientes | Servidor: `CustomerMatchOut` publica `cards` con `additionalProperties: false`. Cliente: el modelo espejo del adaptador acepta la salida real y rechaza un `cards` con campos extra | — |
 | AC-007-33 | `Transaction` rechaza `merchant_country` inválido (`"co"`, `"COL"`, `""`) | Las 3 herramientas vía sesión MCP con SQLite devuelven `merchant_country = "US"`; `SqlAlchemyTransactionRepository` lo guarda y lo lee | Servidor: `TransactionItemOut` con `merchant_country` y `additionalProperties: false`; snapshot del catálogo actualizado. Cliente: los modelos espejo aceptan la salida real de las 3 herramientas | — |
 | AC-007-34 | — | — | — | `tests/e2e/test_chat_e2e.py`: base SQLite temporal preparada con los repositorios del core; `create_app` con el `McpStdioBankingAdapter` real (subproceso por stdio) y `FakeLLM`; 4 mensajes por `TestClient`. En la base quedan 1 disputa `OPEN` sobre `TX-L1` y 1 derivación `PENDING` con `AMOUNT_OVER_THRESHOLD` sobre `TX-L2` |
+| AC-007-35 | `test_handle_customer_message_stop_reason.py`: `tool_use(consultar_transacciones)` → `end_turn`; 1 `list_transactions`, la 2.ª petición al `FakeLLM` lleva el `tool_result` enlazado, el `reply` es el texto y hay 2 llamadas; `ACTIVE` | — | — | — |
+| AC-007-36 | `end_turn` con texto: 1 llamada al `FakeLLM`, ninguna en `FakeBankingTools`, el `reply` es el texto; `ACTIVE` | — | — | — |
+| AC-007-37 | `tool_use` ×3 (`verificar_identidad`, `consultar_transacciones`, `evaluar_disputa`) → `end_turn`: orden de llamadas en `FakeBankingTools`, `open_dispute(TX-L1)`, sin `escalate`; `ACTIVE` | — | — | — |
+| AC-007-38 | Las 4 filas parametrizadas (máximo/pasos 8/7, 8/8, 8/9 y 3/2) con `max_iterations` inyectado: número de `list_transactions`, número de llamadas al `FakeLLM`, `ITERATION_LIMIT` y `INCONCLUSIVE_RULES` o `ACTIVE` | — | — | — |
+| AC-007-39 | Las 2 filas (`Voy a consultar…`, `Ya bloqueé…`) con `end_turn`: ninguna llamada en `FakeBankingTools`, `outcomes=[]`, `ACTIVE`; `SYSTEM_PROMPT` contiene la instrucción de no afirmar acciones fuera de `outcomes` | — | — | — |
+| AC-007-40 | Las 6 filas (`max_tokens`, `refusal`, `pause_turn`, `stop_sequence`, `other_reason`, ausente con `infer_stop_reason=False`): sin escrituras ni lecturas, `escalate` con `UNRECOVERABLE_SYSTEM_FAILURE`, `LLM_FAILURE`, `reply` fijo sin el texto del guion, 1 sola llamada al `FakeLLM`; `ESCALATED`. `test_loop_control.py`: tabla completa de §1.1 | `AnthropicLLMAdapter` con `httpx.MockTransport`: `stop_reason` `tool_use`, `end_turn`, `max_tokens`, `refusal` y `pause_turn` llegan tal cual a `LLMResponse` | — | — |
+| AC-007-41 | `max_tokens` con `evaluar_disputa(TX-L1)` y `reportar_fraude("4321")`, con `TX-L1` ya consultada: sin `open_dispute`, sin `block_card`, sin decisión en `conv.decisions`, sin evento `decision`; `LLM_FAILURE`; `ESCALATED` | — | — | — |
+| AC-007-42 | Las 4 filas (`end_turn` vacío, solo espacios, con petición; `tool_use` sin peticiones): ninguna herramienta ejecutada, `UNRECOVERABLE_SYSTEM_FAILURE`, `LLM_FAILURE`, `ESCALATED` | — | — | — |
+| AC-007-43 | `FakeAgentAuditLog` + `FixedAgentClock`: dos mensajes, 3 eventos `llm_response` en orden con `input.call`, `stop_reason`, `decision`, `tool_calls` y `rule` de la tabla; ningún evento `llm_response` contiene el texto del guion; ningún evento contiene el PAN ni `D-1001`. Fila 8/8 de AC-007-38: el evento de la 8.ª llamada tiene `ESCALATE` y `RN-007-23` | — | — | — |
 
 Adicionales:
 
@@ -228,7 +276,9 @@ Adicionales:
 - **Invariantes (§5.3.5):**
   - Art. 7: AC-007-02, AC-007-11 y AC-007-15.
   - Decisiones no ejecutables: AC-007-07 y AC-007-08.
-  - Límite del loop: AC-007-25.
+  - Límite del loop: AC-007-25 y AC-007-38.
+  - Razón de parada (0.2.0): AC-007-40, AC-007-41 y AC-007-42 simulan un LLM que viola el protocolo y comprueban que la guarda actúa antes de ejecutar nada (`agent-behavior.md` §6).
+- **Regresión 0.2.0:** los tests de AC-007-01 a 34 siguen en verde sin cambiar sus guiones, gracias a la inferencia del `FakeLLM`. Las afirmaciones que cuentan todos los eventos de auditoría de un turno se acotan al tipo de evento que verifican, para que los nuevos `llm_response` no las rompan.
 - **Contrato en ambos lados (`mcp-testing.md` §1):** `tests/contract/dispute_agent/test_banking_client_contract.py` valida los modelos espejo del adaptador contra la salida real de las 6 herramientas (sesión MCP en memoria) y contra los sobres de error. También comprueba que rechazan campos extra.
 - **Regresión del core:** las suites de 001–006 siguen en verde. Las afirmaciones de igualdad exacta de campos (`TransactionItem` y cliente de `buscar_cliente`) se actualizan para incluir los campos nuevos, sin ningún otro cambio de comportamiento.
 - **Fronteras:** el hook `check_mcp_boundaries` impide importar `core_banking_mcp` desde `dispute_agent`. Un test unitario recorre `src/dispute_agent` y falla si algún módulo importa `core_banking_mcp` o `sqlalchemy`.
@@ -246,6 +296,9 @@ Cobertura: `pytest --cov` con `fail_under=80` global. En la verificación final,
 | El cambio de `Transaction` o `Card` rompe builders y tests de 001–006 | Medio | Los campos nuevos van al final y con valor por defecto (`"CO"`, `None`). `models/tables.py`, `schemas.py`, `server.py`, `tests/fakes/*` y los `__init__.py` cuentan como archivos compartidos al calcular las oleadas. |
 | Una base `data/core_banking.db` local de 001–006 no tiene la columna `merchant_country` | Bajo | `create_all` no altera tablas existentes: hay que borrar la base local, ignorada por git. Se documenta en el resumen del PR. |
 | `.claude/rules/mcp-client.md` §3 describe una guarda que deja pasar herramientas tras la verificación, mientras que aquí las escrituras nunca las pide el LLM | Bajo | Es más estricto y compatible con la rule y con el Art. 5; no requiere enmienda. |
+| (0.2.0) El SDK de Anthropic devuelve una razón de parada nueva o renombrada y el agente deriva conversaciones válidas | Medio | Por diseño es el comportamiento seguro (Art. 10, RN-007-34). Cada derivación queda auditada con la razón recibida, y una prueba `@pytest.mark.llm` existente detectaría el cambio. |
+| (0.2.0) Los eventos `llm_response` rompen tests de auditoría que cuentan todos los eventos | Bajo | Se acotan esas afirmaciones al tipo de evento (§6, "Regresión 0.2.0"). |
+| (0.2.0) Con `end_turn` vacío tras acciones ya hechas en el turno (p. ej. disputa abierta), la conversación se deriva y se cierra | Bajo | Lo exige la spec (RN-007-35). La disputa abierta queda en `outcomes` y `_fail_turn` no duplica derivaciones. |
 | La redacción de RN-007-26 se come números legítimos largos (p. ej. referencias de 13+ dígitos) | Bajo | Los `dispute_id` y `escalation_id` del core son `DSP-` / `ESC-` + 6 dígitos y los montos tienen menos de 13 dígitos. Es aceptable y lo exige la spec. |
 
 ## 8. Cumplimiento de la constitución
@@ -253,15 +306,15 @@ Cobertura: `pytest --cov` con `fail_under=80` global. En la verificación final,
 | Artículo | Estado | Justificación |
 |---|---|---|
 | Art. 1 — Datos ficticios | Cumple | Las semillas nuevas (`TX-000010`, `TX-000011`, países) son ficticias y fijas; los tests usan builders y el e2e su propia base temporal. |
-| Art. 2 — Spec-anchored | Cumple | Implementa la spec 0.1.0 aprobada. Los 34 AC están trazados en §6. Las specs 001, 003, 004 y 006 se actualizan en el mismo PR para reflejar los campos nuevos (§4.3.3). |
+| Art. 2 — Spec-anchored | Cumple | Implementa la spec 0.2.0 aprobada. Los 43 AC están trazados en §6. Las specs 001, 003, 004 y 006 se actualizan en el mismo PR para reflejar los campos nuevos (§4.3.3). |
 | Art. 3 — TDD | Cumple | Cada tarea empezará por su test. El dominio puro y los fakes (`FakeLLM`, `FakeBankingTools`) permiten el ciclo rojo-verde sin I/O. |
 | Art. 4 — Arquitectura hexagonal | Cumple | `DisputePolicy`, `Conversation` y la redacción usan solo stdlib. FastAPI, Anthropic, MCP y Pydantic quedan en infraestructura. Cableado solo en `main.py` y `server.py`; lo refuerza el hook. |
 | Art. 5 — El dominio decide | Cumple | Las decisiones las toma `DisputePolicy`. El LLM solo interpreta (herramientas de intención) y redacta; nunca ejecuta escrituras ni puede alterar `outcomes` (AC-007-07, AC-007-08, AC-007-28). |
 | Art. 6 — Acciones vía MCP | Cumple | `dispute_agent` solo accede al core con `McpStdioBankingAdapter` (cliente MCP stdio); sin imports del core ni SQLAlchemy (hook y test de fronteras). |
 | Art. 7 — Identificación antes que información | Cumple | La guarda de RN-007-01 bloquea antes de llegar al servidor, que valida de nuevo. El LLM no ve datos de `buscar_cliente` antes de verificar y la salida se filtra (AC-007-02, AC-007-21, AC-007-27). |
-| Art. 8 — Auditoría | Cumple | Hay eventos de llamada a herramienta (incluidas las bloqueadas), de decisión y de derivación o cierre, con `conversation_id`, reloj inyectado, entrada, salida, regla y motivo, sin PAN ni documento (AC-007-30). |
+| Art. 8 — Auditoría | Cumple | Hay eventos de llamada a herramienta (incluidas las bloqueadas), de decisión, de derivación o cierre y, desde 0.2.0, de cada respuesta del LLM sin su texto (AC-007-43), con `conversation_id`, reloj inyectado, entrada, salida, regla y motivo, sin PAN ni documento (AC-007-30). |
 | Art. 9 — Secretos | Cumple | `ANTHROPIC_API_KEY` solo por entorno (`SecretStr`); `.env.example` gana las claves sin valor. |
-| Art. 10 — Ante la duda, escalar | Cumple | Las fallas de herramientas o del LLM, las salidas inválidas, el límite de iteraciones, la moneda sin tasa y la tarjeta ambigua en un fraude derivan por defecto (AC-007-03, 10, 23, 25). |
+| Art. 10 — Ante la duda, escalar | Cumple | Las fallas de herramientas o del LLM, las salidas inválidas, el límite de iteraciones, la moneda sin tasa y la tarjeta ambigua en un fraude derivan por defecto (AC-007-03, 10, 23, 25). Desde 0.2.0, también toda razón de parada inesperada o respuesta incoherente, sin ejecutar ninguna petición (AC-007-40 a 42). |
 
 ---
 

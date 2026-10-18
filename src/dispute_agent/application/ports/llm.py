@@ -47,10 +47,11 @@ class ChatMessage:
 
 @dataclass(frozen=True)
 class LLMResponse:
-    """Respuesta del LLM: texto y/o llamadas a herramientas."""
+    """Respuesta del LLM: texto, llamadas a herramientas y razón de parada."""
 
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = field(default=())
+    stop_reason: str | None = None
 
 
 class LLMPort(Protocol):
