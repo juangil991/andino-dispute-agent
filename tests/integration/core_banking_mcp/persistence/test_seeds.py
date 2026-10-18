@@ -15,6 +15,7 @@ from core_banking_mcp.infrastructure.outbound.persistence.database import (
 from core_banking_mcp.infrastructure.outbound.persistence.models.tables import (
     CardRow,
     CustomerRow,
+    DisputeRow,
     TransactionRow,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import (
@@ -23,6 +24,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_dispute_repository import (
+    SqlAlchemyDisputeRepository,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
     SqlAlchemyTransactionRepository,
@@ -42,8 +46,12 @@ def test_seed_database_is_idempotent_and_reproducible() -> None:
     session = _new_session()
     repo = SqlAlchemyCustomerRepository(session)
 
-    seed_database(repo, SqlAlchemyTransactionRepository(session))
-    seed_database(repo, SqlAlchemyTransactionRepository(session))
+    seed_database(
+        repo, SqlAlchemyTransactionRepository(session), SqlAlchemyDisputeRepository(session)
+    )
+    seed_database(
+        repo, SqlAlchemyTransactionRepository(session), SqlAlchemyDisputeRepository(session)
+    )
 
     assert len(SEED_CUSTOMERS) == 7
     assert session.scalar(select(func.count()).select_from(CustomerRow)) == 7
@@ -73,7 +81,9 @@ def test_ac_002_01_seeded_customers_have_registered_dates() -> None:
     session = _new_session()
     repo = SqlAlchemyCustomerRepository(session)
 
-    seed_database(repo, SqlAlchemyTransactionRepository(session))
+    seed_database(
+        repo, SqlAlchemyTransactionRepository(session), SqlAlchemyDisputeRepository(session)
+    )
 
     for i in range(1, 8):
         assert repo.find_identity(f"C-000{i}") is not None
@@ -94,8 +104,8 @@ def test_seed_database_seeds_transactions_once() -> None:
     customers = SqlAlchemyCustomerRepository(session)
     transactions = SqlAlchemyTransactionRepository(session)
 
-    seed_database(customers, transactions)
-    seed_database(customers, transactions)
+    seed_database(customers, transactions, SqlAlchemyDisputeRepository(session))
+    seed_database(customers, transactions, SqlAlchemyDisputeRepository(session))
 
     assert session.scalar(select(func.count()).select_from(TransactionRow)) == 9
     refs = {
@@ -111,3 +121,30 @@ def test_seed_database_seeds_transactions_once() -> None:
     start, end = BogotaDateRange(date(2026, 9, 1), date(2026, 9, 30)).utc_bounds()
     found = transactions.find_transactions(["CARD-0001"], start, end, 50)
     assert [t.transaction_id for t in found] == ["TX-000004", "TX-000003", "TX-000002", "TX-000001"]
+
+
+# Soporte de tests: semillas ficticias reproducibles (idempotentes) · Art. 1
+# Invariante: Art. 1 — datos semilla ficticios y reproducibles; la consulta de disputa OPEN
+# sobre las semillas solo confirma su estado (OPEN frente a CLOSED y REJECTED).
+# AC-004-07 · Art. 1
+def test_support_seed_database_seeds_disputes_once() -> None:
+    """Soporte: las 3 disputas del plan §4 se siembran una sola vez."""
+    session = _new_session()
+    customers = SqlAlchemyCustomerRepository(session)
+    transactions = SqlAlchemyTransactionRepository(session)
+    disputes = SqlAlchemyDisputeRepository(session)
+
+    seed_database(customers, transactions, disputes)
+    seed_database(customers, transactions, disputes)
+
+    rows = session.scalars(select(DisputeRow).order_by(DisputeRow.dispute_id)).all()
+    assert [(r.dispute_id, r.status, r.transaction_id) for r in rows] == [
+        ("DSP-000001", "OPEN", "TX-000002"),
+        ("DSP-000002", "CLOSED", "TX-000006"),
+        ("DSP-000003", "REJECTED", "TX-000008"),
+    ]
+    opened = disputes.find_open_by_transaction("TX-000002")
+    assert opened is not None
+    assert opened.dispute_id == "DSP-000001"
+    assert disputes.find_open_by_transaction("TX-000006") is None
+    assert disputes.find_open_by_transaction("TX-000008") is None

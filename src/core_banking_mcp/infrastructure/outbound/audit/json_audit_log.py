@@ -14,6 +14,10 @@ _OPTIONAL_KEYS = (
     "date_from",
     "date_to",
     "transaction_ids",
+    "transaction_id",
+    "dispute_reason",
+    "idempotency_key",
+    "dispute_id",
 )
 
 

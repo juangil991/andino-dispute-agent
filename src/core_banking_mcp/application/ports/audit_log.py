@@ -32,6 +32,10 @@ class AuditEvent:
     date_from: str | None = None
     date_to: str | None = None
     transaction_ids: tuple[str, ...] = ()
+    transaction_id: str | None = None
+    dispute_reason: str | None = None
+    idempotency_key: str | None = None
+    dispute_id: str | None = None
 
 
 class AuditLogPort(Protocol):

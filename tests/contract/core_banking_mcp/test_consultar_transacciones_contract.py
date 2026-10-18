@@ -98,6 +98,8 @@ def test_ac_003_11_consultar_transacciones__error_catalog__includes_identity_not
         "INVALID_INPUT",
         "IDENTITY_NOT_VERIFIED",
         "NOT_FOUND",
+        "TRANSACTION_NOT_DISPUTABLE",
+        "DISPUTE_ALREADY_OPEN",
         "INTERNAL",
     }
 

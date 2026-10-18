@@ -5,11 +5,15 @@ from datetime import date
 from core_banking_mcp.domain.models.customer import Card, CardStatus, Customer
 from core_banking_mcp.domain.models.identity import IdentityRecord
 from core_banking_mcp.domain.models.search import SearchCriteria
+from core_banking_mcp.infrastructure.outbound.persistence.seeds.disputes import seed_disputes
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.transactions import (
     seed_transactions,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_dispute_repository import (
+    SqlAlchemyDisputeRepository,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
     SqlAlchemyTransactionRepository,
@@ -61,9 +65,11 @@ SEED_CUSTOMERS: tuple[tuple[Customer, dict[str, str], IdentityRecord], ...] = (
 
 
 def seed_database(
-    repository: SqlAlchemyCustomerRepository, transactions: SqlAlchemyTransactionRepository
+    repository: SqlAlchemyCustomerRepository,
+    transactions: SqlAlchemyTransactionRepository,
+    disputes: SqlAlchemyDisputeRepository,
 ) -> None:
-    """Inserta las semillas (clientes y transacciones) solo si la base está vacía.
+    """Inserta las semillas (clientes, transacciones y disputas) solo si la base está vacía.
 
     "Vacía" se detecta buscando el primer cliente de la semilla por su documento
     (el repositorio no expone contar/listar); así se evita tocar el repositorio.
@@ -74,3 +80,4 @@ def seed_database(
     for customer, pans, identity in SEED_CUSTOMERS:
         repository.add(customer, pans, identity=identity)
     seed_transactions(transactions)
+    seed_disputes(disputes)

@@ -67,5 +67,7 @@ def test_ac_002_16_error_envelope_matches_spec() -> None:
         "INVALID_INPUT",
         "IDENTITY_NOT_VERIFIED",
         "NOT_FOUND",
+        "TRANSACTION_NOT_DISPUTABLE",
+        "DISPUTE_ALREADY_OPEN",
         "INTERNAL",
     }

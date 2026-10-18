@@ -1,7 +1,8 @@
-"""Smoke test por stdio real del servidor core_banking_mcp (AC-001-01, AC-002-01, AC-002-05)."""
+"""Smoke test por stdio real del servidor core_banking_mcp (AC-001/002/003/004)."""
 
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import anyio
@@ -49,6 +50,7 @@ async def test_ac_002_01_verificar_identidad__stdio_server__verifies_seeded_cust
     assert sorted(t.name for t in tools.tools) == [
         "buscar_cliente",
         "consultar_transacciones",
+        "iniciar_disputa",
         "verificar_identidad",
     ]
     assert not result.isError
@@ -179,6 +181,114 @@ async def test_ac_003_11_consultar_transacciones__stdio_server__unverified_conve
     assert result.structuredContent["code"] == "IDENTITY_NOT_VERIFIED"
     assert result.structuredContent["retryable"] is False
     assert "transactions" not in result.structuredContent
+    assert "TX-0000" not in result.model_dump_json()
+
+
+# Regla: RN-004-01 — La solicitud indica la transacción por el `transaction_id` que devuelve
+#   `consultar_transacciones`, el motivo (`reason`) y una clave de reintento (`idempotency_key`)
+#   generada por el consumidor.
+# Regla: RN-004-11 — Una disputa nueva queda con `status = OPEN`, un `dispute_id` opaco y único que
+#   no se deriva del número de la tarjeta, y `opened_at` igual al instante del reloj inyectado
+#   expresado en ISO 8601 con la zona de Bogotá (`−05:00`). (Aquí el reloj es el real: se
+#   comprueba formato y zona, no un valor fijo.)
+# Regla: RN-004-12 — La respuesta exitosa contiene **solo** `dispute_id`, `status`, `opened_at`,
+#   `reason` (el código) y `transaction`, con exactamente los campos de `TransactionItem` de la
+#   spec 003 (RN-003-12): `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`,
+#   `status`, `card_id` y `masked_card`.
+# AC-004-01 · Art. 7 (apertura de disputa por stdio real con las semillas; base temporal limpia)
+async def test_ac_004_01_iniciar_disputa__stdio_server__opens_dispute_on_seeded_transaction(
+    tmp_path: Path,
+) -> None:
+    """AC-004-01: por stdio real, tras verificar a C-0001, TX-000001 queda con disputa OPEN."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad",
+                {
+                    "conversation_id": "conv-smoke-dispute",
+                    "customer_id": "C-0001",
+                    "birth_date": "1990-03-15",
+                    "document_issue_date": "2008-04-20",
+                },
+            )
+            result = await session.call_tool(
+                "iniciar_disputa",
+                {
+                    "conversation_id": "conv-smoke-dispute",
+                    "transaction_id": "TX-000001",
+                    "reason": "UNRECOGNIZED_CHARGE",
+                    "idempotency_key": "key-smoke-1",
+                },
+            )
+
+    assert not result.isError
+    assert result.structuredContent is not None
+    content = result.structuredContent
+    assert set(content) == {"dispute_id", "status", "opened_at", "reason", "transaction"}
+    assert content["status"] == "OPEN"
+    assert content["reason"] == "UNRECOGNIZED_CHARGE"
+    assert isinstance(content["dispute_id"], str)
+    assert content["dispute_id"]
+    assert "4321" not in content["dispute_id"]
+    opened_at = datetime.fromisoformat(content["opened_at"])
+    assert opened_at.utcoffset() == timedelta(hours=-5)
+    assert content["opened_at"].endswith("-05:00")
+    assert set(content["transaction"]) == {
+        "transaction_id",
+        "occurred_at",
+        "merchant",
+        "amount",
+        "currency",
+        "status",
+        "card_id",
+        "masked_card",
+    }
+    assert content["transaction"]["transaction_id"] == "TX-000001"
+    assert "4111111111114321" not in result.model_dump_json()
+
+
+# Regla: RN-004-03 — La herramienta exige que la conversación esté verificada en el servidor
+#   (estado de RN-002-13). Una conversación sin verificación exitosa, desconocida o bloqueada por
+#   intentos agotados se rechaza con `IDENTITY_NOT_VERIFIED`. La verificación no se traslada:
+#   estar verificada en otra conversación no cuenta.
+# AC-004-12 · Art. 7 (sin identificación no se abre una disputa)
+async def test_ac_004_12_iniciar_disputa__stdio_server__unverified_conversation_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """AC-004-12: por stdio real, una conversación distinta a la verificada recibe el rechazo."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad",
+                {
+                    "conversation_id": "conv-verified",
+                    "customer_id": "C-0001",
+                    "birth_date": "1990-03-15",
+                    "document_issue_date": "2008-04-20",
+                },
+            )
+            result = await session.call_tool(
+                "iniciar_disputa",
+                {
+                    "conversation_id": "conv-other",
+                    "transaction_id": "TX-000001",
+                    "reason": "UNRECOGNIZED_CHARGE",
+                    "idempotency_key": "key-smoke-2",
+                },
+            )
+
+    assert result.structuredContent is not None
+    assert result.structuredContent["code"] == "IDENTITY_NOT_VERIFIED"
+    assert result.structuredContent["retryable"] is False
+    assert "dispute_id" not in result.structuredContent
     assert "TX-0000" not in result.model_dump_json()
 
 

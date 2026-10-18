@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -50,3 +50,24 @@ class TransactionRow(Base):
     amount_minor: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String)
+
+
+class DisputeRow(Base):
+    __tablename__ = "disputes"
+    __table_args__ = (
+        Index("ux_disputes_conversation_key", "conversation_id", "idempotency_key", unique=True),
+        Index(
+            "ux_disputes_open_transaction",
+            "transaction_id",
+            unique=True,
+            sqlite_where=text("status = 'OPEN'"),
+        ),
+    )
+
+    dispute_id: Mapped[str] = mapped_column(String, primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.transaction_id"))
+    conversation_id: Mapped[str] = mapped_column(String)
+    idempotency_key: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    opened_at: Mapped[datetime] = mapped_column(DateTime)  # UTC sin zona

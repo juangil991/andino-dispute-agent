@@ -43,7 +43,7 @@ _CARD_NOT_FOUND_MESSAGE = "No se encontró una tarjeta del cliente con esos últ
 _BOGOTA = timezone(timedelta(hours=-5))
 
 
-def _to_item(transaction: Transaction) -> TransactionItemOut:
+def to_transaction_item(transaction: Transaction) -> TransactionItemOut:
     return TransactionItemOut(
         transaction_id=transaction.transaction_id,
         occurred_at=transaction.occurred_at.astimezone(_BOGOTA).isoformat(),
@@ -134,7 +134,7 @@ def register_transaction_tools(mcp: FastMCP, list_card_transactions: ListCardTra
                 retryable=False,
             )
         output = ConsultarTransaccionesOut(
-            transactions=[_to_item(transaction) for transaction in result.transactions],
+            transactions=[to_transaction_item(transaction) for transaction in result.transactions],
             refinement_required=result.refinement_required,
         )
         return CallToolResult(

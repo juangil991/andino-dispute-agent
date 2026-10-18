@@ -10,7 +10,7 @@ from tests.fakes.identity_builder import IdentityBuilder
 from tests.fakes.transaction_builder import TransactionBuilder
 
 from core_banking_mcp.domain.models.customer import Card, CardStatus, Customer
-from core_banking_mcp.domain.models.transaction import BogotaDateRange
+from core_banking_mcp.domain.models.transaction import BogotaDateRange, TransactionStatus
 from core_banking_mcp.infrastructure.outbound.persistence.database import (
     create_engine_from_url,
     create_schema,
@@ -226,3 +226,50 @@ def test_support_occurred_at_roundtrips_as_utc(
     assert found.occurred_at == local
     assert found.occurred_at.tzinfo is UTC
     assert found.occurred_at.hour == 15
+
+
+# Regla: RN-004-04 — La transacción debe pertenecer a una tarjeta del cliente verificado; si es de otro cliente o no existe, el resultado es el mismo (sin datos).  # noqa: E501
+# Regla: RN-004-13 — La respuesta no contiene datos de otros clientes.  # noqa: E501
+# AC-004-11 · Art. 7
+def test_ac_004_11_find_customer_transaction_ignores_other_customers(
+    customers: SqlAlchemyCustomerRepository,
+    repo: SqlAlchemyTransactionRepository,
+) -> None:
+    """AC-004-11: la transacción ajena o inexistente da None; la propia se devuelve completa."""
+    _customer(customers, "C-0001", "DOC-1", Card("4321", CardStatus.ACTIVE))
+    _customer(customers, "C-0002", "DOC-2", Card("8765", CardStatus.ACTIVE))
+    repo.add(
+        "CARD-0001",
+        _tx("CARD-0001", "4321", "TX-L1")
+        .with_amount(Decimal("49.90"))
+        .with_currency("USD")
+        .build(),
+    )
+    repo.add("CARD-0002", _tx("CARD-0002", "8765", "TX-P1").build())
+
+    own = repo.find_customer_transaction("C-0001", "TX-L1")
+
+    assert repo.find_customer_transaction("C-0001", "TX-P1") is None
+    assert repo.find_customer_transaction("C-0001", "TX-9999") is None
+    assert own is not None
+    assert (own.card_id, own.card_last4) == ("CARD-0001", "4321")
+    assert (own.amount, own.currency) == (Decimal("49.90"), "USD")
+    assert own.status == TransactionStatus.CONFIRMED
+
+
+# Regla: RN-004-04 — La transacción puede ser de una tarjeta en cualquier estado (activa, bloqueada o cancelada).  # noqa: E501
+# AC-004-06 · Art. 3
+@pytest.mark.parametrize("status", [CardStatus.ACTIVE, CardStatus.BLOCKED, CardStatus.CANCELLED])
+def test_ac_004_06_find_customer_transaction_matches_any_card_status(
+    customers: SqlAlchemyCustomerRepository,
+    repo: SqlAlchemyTransactionRepository,
+    status: CardStatus,
+) -> None:
+    """AC-004-06: la transacción de la tarjeta 4321 se encuentra en cualquier estado."""
+    _customer(customers, "C-0001", "DOC-1", Card("4321", status))
+    repo.add("CARD-0001", _tx("CARD-0001", "4321", "TX-L1").build())
+
+    found = repo.find_customer_transaction("C-0001", "TX-L1")
+
+    assert found is not None
+    assert found.transaction_id == "TX-L1"

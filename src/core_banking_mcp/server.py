@@ -6,9 +6,11 @@ from mcp.server.fastmcp import FastMCP
 from sqlalchemy.engine import make_url
 
 from core_banking_mcp.application.use_cases.list_card_transactions import ListCardTransactions
+from core_banking_mcp.application.use_cases.open_dispute import OpenDispute
 from core_banking_mcp.application.use_cases.search_customers import SearchCustomers
 from core_banking_mcp.application.use_cases.verify_identity import VerifyIdentity
 from core_banking_mcp.config import CoreSettings
+from core_banking_mcp.infrastructure.inbound.mcp.dispute_tools import register_dispute_tools
 from core_banking_mcp.infrastructure.inbound.mcp.identity_tools import register_identity_tools
 from core_banking_mcp.infrastructure.inbound.mcp.tools import register_tools
 from core_banking_mcp.infrastructure.inbound.mcp.transaction_tools import (
@@ -24,6 +26,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.database import (
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import seed_database
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_dispute_repository import (
+    SqlAlchemyDisputeRepository,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
     SqlAlchemyTransactionRepository,
@@ -50,17 +55,29 @@ def build_server(settings: CoreSettings | None = None) -> FastMCP:
     session = session_factory(engine)()
     repository = SqlAlchemyCustomerRepository(session)
     if settings.seed_on_start:
-        seed_database(repository, SqlAlchemyTransactionRepository(session))
+        seed_database(
+            repository,
+            SqlAlchemyTransactionRepository(session),
+            SqlAlchemyDisputeRepository(session),
+        )
     search_customers = SearchCustomers(repository, JsonAuditLog(), SystemClock())
     store = InMemoryConversationVerificationStore()
     verify_identity = VerifyIdentity(repository, store, JsonAuditLog(), SystemClock())
     list_card_transactions = ListCardTransactions(
         SqlAlchemyTransactionRepository(session), store, JsonAuditLog(), SystemClock()
     )
+    open_dispute = OpenDispute(
+        SqlAlchemyTransactionRepository(session),
+        SqlAlchemyDisputeRepository(session),
+        store,
+        JsonAuditLog(),
+        SystemClock(),
+    )
     mcp = FastMCP("core_banking_mcp")
     register_tools(mcp, search_customers)
     register_identity_tools(mcp, verify_identity)
     register_transaction_tools(mcp, list_card_transactions)
+    register_dispute_tools(mcp, open_dispute)
     return mcp
 
 

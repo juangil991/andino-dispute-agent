@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 
 class ErrorCode(StrEnum):
@@ -12,6 +12,8 @@ class ErrorCode(StrEnum):
     INVALID_INPUT = "INVALID_INPUT"
     IDENTITY_NOT_VERIFIED = "IDENTITY_NOT_VERIFIED"
     NOT_FOUND = "NOT_FOUND"
+    TRANSACTION_NOT_DISPUTABLE = "TRANSACTION_NOT_DISPUTABLE"
+    DISPUTE_ALREADY_OPEN = "DISPUTE_ALREADY_OPEN"
     INTERNAL = "INTERNAL"
 
 
@@ -152,3 +154,52 @@ class ConsultarTransaccionesOut(BaseModel):
     refinement_required: bool = Field(
         description="True solo si hubo más de 50 transacciones en el rango (lista vacía)."
     )
+
+
+_DISPUTE_REASONS: list[JsonValue] = [
+    "UNRECOGNIZED_CHARGE",
+    "DUPLICATE_CHARGE",
+    "INCORRECT_AMOUNT",
+    "NOT_RECEIVED",
+    "OTHER",
+]
+
+
+class IniciarDisputaIn(BaseModel):
+    """Entrada de `iniciar_disputa`."""
+
+    conversation_id: str = Field(description="Identificador de correlación; no vacío.")
+    transaction_id: str = Field(
+        description="transaction_id devuelto por consultar_transacciones; 1-64 caracteres."
+    )
+    reason: str = Field(
+        description=(
+            "Motivo de la disputa: UNRECOGNIZED_CHARGE, DUPLICATE_CHARGE, INCORRECT_AMOUNT, "
+            "NOT_RECEIVED u OTHER."
+        ),
+        json_schema_extra={"enum": _DISPUTE_REASONS},
+    )
+    idempotency_key: str = Field(
+        description=(
+            "Clave de reintento generada por el consumidor; 1-64 caracteres; única por "
+            "conversación. Reutilizarla solo para reintentar la misma solicitud."
+        )
+    )
+
+
+class IniciarDisputaOut(BaseModel):
+    """Salida de `iniciar_disputa`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dispute_id: str = Field(
+        description="Identificador opaco de la disputa, no derivado del número de la tarjeta."
+    )
+    status: Literal["OPEN"] = Field(description="Estado de la disputa: OPEN.")
+    opened_at: str = Field(
+        description="Instante de apertura ISO 8601 con zona (p. ej. 2026-10-17T10:00:00-05:00)."
+    )
+    reason: Literal[
+        "UNRECOGNIZED_CHARGE", "DUPLICATE_CHARGE", "INCORRECT_AMOUNT", "NOT_RECEIVED", "OTHER"
+    ] = Field(description="Código del motivo de la disputa.")
+    transaction: TransactionItemOut = Field(description="La transacción disputada.")
