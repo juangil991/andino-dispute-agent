@@ -1,6 +1,6 @@
 # Agente de Disputas — Banco Andino
 
-Agente de IA que atiende **disputas y contracargos de tarjeta por chat web**. Banco Andino es **ficticio**: todos los datos son sintéticos y salen de semillas reproducibles.
+Agente de IA que atiende **disputas y contracargos de tarjeta por una página de chat web**. Banco Andino es **ficticio**: todos los datos son sintéticos y salen de semillas reproducibles.
 
 Objetivos: resolver en primer contacto, escalar correctamente (cero casos auto-resueltos que debían escalarse), trazabilidad total, seguridad del cliente y respuestas claras en español.
 Fuera de alcance: bancos o pasarelas reales, dinero real y bandeja de analistas.
@@ -28,7 +28,10 @@ La fuente de verdad del proyecto es [`docs/constitution.md`](docs/constitution.m
 | 004-open-dispute | Abrir una disputa sobre una transacción (`iniciar_disputa`) |
 | 005-card-block | Bloquear una tarjeta por sospecha de fraude (`bloquear_tarjeta`) |
 | 006-analyst-escalation | Derivar un caso a un analista con resumen estructurado (`escalar_a_analista`) |
-| 007-dispute-resolution-agent | Agente que resuelve en primer contacto y escala cuando corresponde (`POST /api/chat`, `DisputePolicy`) |
+| 007-dispute-resolution-agent | Agente que resuelve en primer contacto y escala cuando corresponde (`POST /api/chat`, `DisputePolicy`); v0.2.0: el loop continúa o termina según la razón de parada del LLM |
+| 008-chat-web-page | Página de chat (`GET /`, recursos en `/static`) para conversar con el agente |
+
+En curso: `009-streaming-agent-reply` (spec aprobada, sin plan ni implementación): mostrar la respuesta palabra por palabra con `POST /api/chat/stream`. Todavía no existe ese endpoint.
 
 ## Stack
 
@@ -39,7 +42,7 @@ Python 3.12 · uv · FastAPI + Uvicorn · Pydantic v2 / pydantic-settings · SDK
 Dos aplicaciones hexagonales independientes que **solo se comunican por MCP**:
 
 ```
-Chat web ──HTTP──▶ dispute_agent (FastAPI)
+Página de chat ──HTTP──▶ dispute_agent (FastAPI: `GET /`, `POST /api/chat`)
                     ├─ loop LLM ──▶ API de Anthropic
                     ├─ DisputePolicy (decide RESOLVE / REJECT / ESCALATE)
                     └─ MCP stdio ──▶ core_banking_mcp (tools) ──▶ SQLite
@@ -55,7 +58,7 @@ Estructura:
 
 ```
 src/core_banking_mcp/   domain/ application/ infrastructure/{inbound/mcp,outbound/...} server.py
-src/dispute_agent/      domain/ application/ infrastructure/{inbound/web/api,outbound/...} main.py
+src/dispute_agent/      domain/ application/ infrastructure/{inbound/web/{api,static},outbound/...} main.py
 tests/                  unit/ integration/ contract/ e2e/ fakes/
 specs/NNN-feature/      spec.md → plan.md → tasks.md
 docs/                   constitution.md, mcp-inspector.md
@@ -102,11 +105,13 @@ uv sync                                                   # instalar dependencia
 
 uv run python -m core_banking_mcp.server                  # servidor MCP por stdio
 uv run mcp dev src/core_banking_mcp/server.py             # MCP Inspector (requiere Node/npx; ver docs/mcp-inspector.md)
-uv run python -m dispute_agent.main                       # agente en http://127.0.0.1:8000
+uv run python -m dispute_agent.main                       # agente y página de chat en http://127.0.0.1:8000
 
 uv run pytest                                             # suite completa (excluye tests con LLM real)
 uv run pytest tests/unit/<ruta>/test_x.py::test_name      # un solo test
 uv run pytest -m llm                                      # pruebas con Claude real (opcionales)
+uv run playwright install chromium                        # una sola vez (pruebas de navegador)
+uv run pytest -m browser                                  # pruebas de navegador de la página de chat
 uv run pytest --cov                                       # cobertura (mínimo 80 %)
 uv run ruff check . ; uv run ruff format --check .
 uv run mypy --strict src
@@ -114,7 +119,9 @@ uv run mypy --strict src
 
 Al arrancar, el servidor MCP crea el esquema y siembra los datos si la base está vacía. No hay migraciones: si cambia el esquema, borra `data/core_banking.db`.
 
-### Probar el agente por HTTP
+### Probar el agente
+
+Abre http://127.0.0.1:8000 para usar la página de chat, o llama a la API por HTTP:
 
 ```powershell
 $body = @{ message = "Hola, desconozco un cargo en mi tarjeta" } | ConvertTo-Json
@@ -199,8 +206,7 @@ Para pruebas por MCP Inspector (sin agente) usa `docs/mcp-inspector.md`.
 
 ## Estado y notas
 
-- No hay front estático todavía: la interfaz disponible es `POST /api/chat`.
-- La spec 007 y `src/dispute_agent` pueden tener cambios sin commitear en la rama de trabajo.
+- La interfaz es la página de chat en `/` (spec 008); la respuesta aún llega completa, no palabra por palabra (spec 009 pendiente).
 - La guía del Inspector solo cubre `buscar_cliente` y `verificar_identidad`.
 - La verificación de identidad y su contador viven en memoria del proceso del servidor MCP; se reinician al reconectar.
 - Convenciones: documentación, specs y mensajes al cliente en español; código, identificadores y commits en inglés (los nombres de las tools MCP en español son la excepción).
