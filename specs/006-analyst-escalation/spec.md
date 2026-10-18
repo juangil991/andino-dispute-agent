@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `006-analyst-escalation` |
-| Versión | 0.1.0 |
+| Versión | 0.2.0 |
 | Estado | Aprobada |
 | Fecha | 2026-10-17 |
 | Origen | Issue [#31](https://github.com/juangil991/andino-dispute-agent/issues/31) del backlog (P0) |
@@ -65,7 +65,7 @@ Esta feature añade la herramienta `escalar_a_analista` (catálogo de la constit
 | RN-006-09 | La clave de reintento es única **dentro de cada conversación** y solo se registra cuando se crea una derivación nueva. Si la conversación ya usó la clave con **exactamente los mismos** datos (`reason`, `transaction_id`, `card_id`, `prior_actions`, `dispute_id` y `note`, comparados tras recortar y normalizar según RN-006-07 y RN-006-10, con `prior_actions` comparada como conjunto), se devuelve la derivación que creó esa solicitud (mismo `escalation_id`, `escalated_at` y resumen) sin registrar otra. Si alguno de esos datos difiere, se rechaza con `INVALID_INPUT` y no se registra nada. La misma clave en otra conversación es una solicitud independiente. | Issue #31; clarificación 2026-10-17; RN-004-08; RN-005-07 |
 | RN-006-10 | Validación de entrada: `conversation_id` obligatorio y no vacío tras recortar; `idempotency_key` obligatoria, de 1 a 64 caracteres tras recortar; `reason` obligatorio y del catálogo de RN-006-02; `transaction_id`, `card_id` y `dispute_id` opcionales (ausentes o `null`) y, si se envían, de 1 a 64 caracteres tras recortar (vacío o solo espacios ⇒ `INVALID_INPUT`); `prior_actions` y `note` según RN-006-05 y RN-006-07. Toda violación ⇒ `INVALID_INPUT`, sin derivación registrada. | Issue #31; clarificación 2026-10-17; RN-004-09; RN-005-08 |
 | RN-006-11 | Las comprobaciones se evalúan en este orden y se devuelve el primer resultado: (1) validación de entrada y coherencia → `INVALID_INPUT`; (2) si hay datos del cliente, identidad verificada → `IDENTITY_NOT_VERIFIED`; (3) clave de reintento ya usada en la conversación → la derivación existente (misma solicitud) o `INVALID_INPUT` (solicitud distinta); (4) pertenencia de los datos al cliente verificado → `NOT_FOUND`; (5) acciones previas contra el core → `NOT_FOUND`; (6) registro de la derivación. | Clarificación 2026-10-17; RN-004-10; RN-005-09 |
-| RN-006-12 | La respuesta exitosa contiene **solo** `escalation_id`, `status`, `escalated_at`, `reason` y `summary`. `summary` contiene **solo** `conversation_id`, `identity_verified`, `customer_id`, `transaction` (con exactamente los campos de `TransactionItem` de la spec 003, RN-003-12, o `null`), `card` (con exactamente `card_id` y `masked_card`, `**** ` seguido de los 4 últimos dígitos, RN-001-09, o `null`), `prior_actions`, `dispute_id` y `note`. | Issue #31; clarificación 2026-10-17 |
+| RN-006-12 | La respuesta exitosa contiene **solo** `escalation_id`, `status`, `escalated_at`, `reason` y `summary`. `summary` contiene **solo** `conversation_id`, `identity_verified`, `customer_id`, `transaction` (con exactamente los campos de `TransactionItem` de la spec 003, RN-003-12, incluido `merchant_country` (spec 007, RN-007-30), o `null`), `card` (con exactamente `card_id` y `masked_card`, `**** ` seguido de los 4 últimos dígitos, RN-001-09, o `null`), `prior_actions`, `dispute_id` y `note`. | Issue #31; clarificación 2026-10-17 |
 | RN-006-13 | La respuesta nunca contiene el número completo de ninguna tarjeta, el documento del cliente ni su nombre, ni datos de otros clientes. | Issue #31; Art. 7; `mcp-tools.md` §8 |
 | RN-006-14 | Derivar un caso solo registra la derivación y la clave de reintento usada. No cambia transacciones, tarjetas, disputas ni el estado de verificación de la conversación, sea cual sea el motivo o el contenido de la nota; no decide si el caso debe derivarse, no abre disputas ni bloquea tarjetas. | Issue #31; Art. 5 |
 | RN-006-15 | Ante una falla inesperada (p. ej. el repositorio de derivaciones no responde al registrar), la herramienta devuelve `INTERNAL` con `retryable = false` y sin detalles internos (trazas, SQL, texto de la excepción). La operación es atómica: no queda ninguna derivación ni clave de reintento registrada. | Art. 10; issue #31; `mcp-tools.md` §7 |
@@ -94,7 +94,7 @@ Cubre: HU-006-01, RN-006-01, RN-006-04, RN-006-08, RN-006-12, RN-006-14
 - **When** se invoca `escalar_a_analista` con `transaction_id = "TX-L1"` y `card_id = "CARD-L1"`
 - **Then** la respuesta trae un `escalation_id` no vacío, `status = "PENDING"`, `escalated_at = "2026-10-17T10:00:00-05:00"` y `reason = "FRAUD_SUSPECTED"`
 - **And** `summary` trae `conversation_id = "A"`, `identity_verified = true`, `customer_id = "C-0001"`, `card = {"card_id": "CARD-L1", "masked_card": "**** 4321"}`, `prior_actions = []`, `dispute_id = null` y `note = null`
-- **And** `summary.transaction` trae `transaction_id = "TX-L1"`, `occurred_at = "2026-10-10T12:00:00-05:00"`, `merchant = "Tienda Aurora"`, `amount = "85000.00"`, `currency = "COP"`, `status = "CONFIRMED"`, `card_id = "CARD-L1"` y `masked_card = "**** 4321"`
+- **And** `summary.transaction` trae `transaction_id = "TX-L1"`, `occurred_at = "2026-10-10T12:00:00-05:00"`, `merchant = "Tienda Aurora"`, `amount = "85000.00"`, `currency = "COP"`, `status = "CONFIRMED"`, `card_id = "CARD-L1"`, `masked_card = "**** 4321"` y `merchant_country = "CO"`
 - **And** queda registrada exactamente 1 derivación `PENDING` con ese `escalation_id` y ese resumen
 - **And** `TX-L1` sigue `CONFIRMED` y sin disputas, `CARD-L1` sigue `ACTIVE` y el estado de verificación de la conversación no cambia
 
@@ -437,7 +437,7 @@ Cubre: HU-006-06, RN-006-16
 | `conversation_id` | `string` | Conversación que originó la derivación. |
 | `identity_verified` | `boolean` | `true` si la conversación estaba verificada (resumen completo); `false` si no (resumen limitado, RN-006-08). |
 | `customer_id` | `string \| null` | Identificador del cliente verificado; `null` en un resumen limitado. |
-| `transaction` | `TransactionItem \| null` | La transacción indicada, con exactamente los campos de `TransactionItem` de la spec 003 (RN-003-12); `null` si no se indicó. |
+| `transaction` | `TransactionItem \| null` | La transacción indicada, con exactamente los campos de `TransactionItem` de la spec 003 (RN-003-12), incluido `merchant_country` (spec 007, RN-007-30); `null` si no se indicó. |
 | `card` | `{card_id, masked_card} \| null` | La tarjeta indicada; `masked_card` es `**** ` seguido de los 4 últimos dígitos; `null` si no se indicó. |
 | `prior_actions` | `array<string>` | Acciones previas indicadas (`DISPUTE_OPENED`, `CARD_BLOCKED`); `[]` si ninguna. |
 | `dispute_id` | `string \| null` | Disputa abierta indicada con `DISPUTE_OPENED`; `null` si no. |
@@ -445,7 +445,7 @@ Cubre: HU-006-06, RN-006-16
 
 Ejemplos:
 
-- Resumen completo: `{"escalation_id": "...", "status": "PENDING", "escalated_at": "2026-10-17T10:00:00-05:00", "reason": "FRAUD_SUSPECTED", "summary": {"conversation_id": "A", "identity_verified": true, "customer_id": "C-0001", "transaction": {"transaction_id": "TX-L1", "occurred_at": "2026-10-10T12:00:00-05:00", "merchant": "Tienda Aurora", "amount": "85000.00", "currency": "COP", "status": "CONFIRMED", "card_id": "CARD-L1", "masked_card": "**** 4321"}, "card": {"card_id": "CARD-L1", "masked_card": "**** 4321"}, "prior_actions": ["CARD_BLOCKED"], "dispute_id": null, "note": "Cliente no reconoce el cargo"}}`
+- Resumen completo: `{"escalation_id": "...", "status": "PENDING", "escalated_at": "2026-10-17T10:00:00-05:00", "reason": "FRAUD_SUSPECTED", "summary": {"conversation_id": "A", "identity_verified": true, "customer_id": "C-0001", "transaction": {"transaction_id": "TX-L1", "occurred_at": "2026-10-10T12:00:00-05:00", "merchant": "Tienda Aurora", "amount": "85000.00", "currency": "COP", "status": "CONFIRMED", "card_id": "CARD-L1", "masked_card": "**** 4321", "merchant_country": "CO"}, "card": {"card_id": "CARD-L1", "masked_card": "**** 4321"}, "prior_actions": ["CARD_BLOCKED"], "dispute_id": null, "note": "Cliente no reconoce el cargo"}}`
 - Resumen limitado: `{"escalation_id": "...", "status": "PENDING", "escalated_at": "2026-10-17T10:00:00-05:00", "reason": "IDENTITY_VERIFICATION_FAILED", "summary": {"conversation_id": "B", "identity_verified": false, "customer_id": null, "transaction": null, "card": null, "prior_actions": [], "dispute_id": null, "note": null}}`
 
 **Errores** (formato `{code, message, retryable}`, `mcp-tools.md` §7; se evalúan en el orden de RN-006-11)
@@ -496,6 +496,7 @@ Ninguna.
 |---|---|---|---|
 | 0.1.0 | 2026-10-17 | Versión inicial a partir de la issue #31 | Juangiov (con Claude Code) |
 | 0.1.0 | 2026-10-17 | Spec aprobada por el usuario | Juangiov |
+| 0.2.0 | 2026-10-18 | Se añade `merchant_country` a `TransactionItem` en el resumen (RN-006-12 y tabla de §7) (cambio compatible, spec [007](../007-dispute-resolution-agent/spec.md) §7.2, RN-007-30) | Juangiov (con Claude Code) |
 
 ---
 

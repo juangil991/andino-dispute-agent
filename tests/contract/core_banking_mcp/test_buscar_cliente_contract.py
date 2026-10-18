@@ -7,6 +7,7 @@ from mcp.types import TextContent
 from core_banking_mcp.infrastructure.inbound.mcp.errors import tool_error
 from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
     BuscarClienteOut,
+    CustomerCardOut,
     CustomerMatchOut,
     ErrorCode,
     ToolErrorOut,
@@ -23,9 +24,24 @@ def test_ac_001_01_customer_match_schema_has_exactly_spec_fields() -> None:
         "full_name",
         "masked_document",
         "masked_cards",
+        "cards",
     }
     assert schema["additionalProperties"] is False
     assert all("description" in p for p in schema["properties"].values())
+
+
+# Regla: RN-007-31 — Cada cliente devuelto por `buscar_cliente` incorpora `cards`: lista de `{card_id, masked_card}` de sus tarjetas en cualquier estado, en el mismo orden que `masked_cards`, que no cambia. No incluye el estado ni el número de la tarjeta.  # noqa: E501
+# AC-007-32 · Art. 7 (datos mínimos)
+def test_ac_007_32_buscar_cliente__cards_schema__has_exactly_card_id_and_masked_card() -> None:
+    """AC-007-32: cards es una lista de CustomerCardOut con solo card_id y masked_card."""
+    schema = CustomerMatchOut.model_json_schema()
+    assert schema["properties"]["cards"]["type"] == "array"
+    assert schema["properties"]["cards"]["items"]["$ref"].endswith("/CustomerCardOut")
+    card = CustomerCardOut.model_json_schema()
+    assert set(card["properties"]) == {"card_id", "masked_card"}
+    assert card["additionalProperties"] is False
+    assert all("description" in p for p in card["properties"].values())
+    assert schema["$defs"]["CustomerCardOut"] == card
 
 
 # Regla: RN-001-10 — la respuesta no incluye token ni indicador de verificación.

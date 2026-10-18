@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `004-open-dispute` |
-| Versión | 0.1.0 |
+| Versión | 0.2.0 |
 | Estado | Aprobada |
 | Fecha | 2026-10-17 |
 | Origen | Issue [#29](https://github.com/juangil991/andino-dispute-agent/issues/29) del backlog (P0) |
@@ -65,7 +65,7 @@ Esta feature añade la herramienta `iniciar_disputa`, la primera que **escribe**
 | RN-004-09 | Validación de entrada: `conversation_id` obligatorio y no vacío tras recortar; `transaction_id` obligatorio, de 1 a 64 caracteres tras recortar; `idempotency_key` obligatoria, de 1 a 64 caracteres tras recortar; `reason` obligatorio y del catálogo de RN-004-02. Toda violación ⇒ `INVALID_INPUT`, sin disputa registrada. | Issue #29; clarificación 2026-10-17 |
 | RN-004-10 | Las comprobaciones se evalúan en este orden y se devuelve el primer resultado: (1) validación de entrada → `INVALID_INPUT`; (2) identidad verificada → `IDENTITY_NOT_VERIFIED`; (3) clave de reintento ya usada en la conversación → la disputa existente (misma solicitud) o `INVALID_INPUT` (solicitud distinta); (4) transacción del cliente verificado → `NOT_FOUND`; (5) transacción confirmada → `TRANSACTION_NOT_DISPUTABLE`; (6) sin disputa abierta sobre la transacción → `DISPUTE_ALREADY_OPEN`. | Clarificación 2026-10-17 |
 | RN-004-11 | Una disputa nueva queda con `status = OPEN`, un `dispute_id` opaco y único que no se deriva del número de la tarjeta, y `opened_at` igual al instante del reloj inyectado expresado en ISO 8601 con la zona de Bogotá (`−05:00`). | Issue #29; §5.3.6; RN-002-08 |
-| RN-004-12 | La respuesta exitosa contiene **solo** `dispute_id`, `status`, `opened_at`, `reason` (el código) y `transaction`, con exactamente los campos de `TransactionItem` de la spec 003 (RN-003-12): `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`, `status`, `card_id` y `masked_card`. | Issue #29; clarificación 2026-10-17 |
+| RN-004-12 | La respuesta exitosa contiene **solo** `dispute_id`, `status`, `opened_at`, `reason` (el código) y `transaction`, con exactamente los campos de `TransactionItem` de la spec 003 (RN-003-12): `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`, `status`, `card_id`, `masked_card` y `merchant_country` (spec 007, RN-007-30). | Issue #29; clarificación 2026-10-17 |
 | RN-004-13 | La respuesta nunca contiene el número completo de ninguna tarjeta, el documento del cliente ni su nombre, ni datos de otros clientes. | Issue #29; Art. 7; `mcp-tools.md` §8 |
 | RN-004-14 | Abrir una disputa solo registra la disputa y la clave de reintento usada. No cambia la transacción, la tarjeta ni el estado de verificación de la conversación; no decide si la disputa procede, no bloquea tarjetas ni escala. | Issue #29; Art. 5 |
 | RN-004-15 | Ante una falla inesperada (p. ej. el repositorio de disputas no responde al registrar), la herramienta devuelve `INTERNAL` con `retryable = false`, sin detalles internos (trazas, SQL, texto de la excepción). No queda ninguna disputa ni clave de reintento registrada: el registro es atómico. | Art. 10; issue #29; `mcp-tools.md` §7 |
@@ -85,7 +85,7 @@ Cubre: HU-004-01, RN-004-01, RN-004-11, RN-004-12, RN-004-14
 
 - **When** se invoca `iniciar_disputa`
 - **Then** la respuesta trae un `dispute_id` no vacío, `status = "OPEN"`, `opened_at = "2026-10-17T10:00:00-05:00"` y `reason = "UNRECOGNIZED_CHARGE"`
-- **And** `transaction` trae `transaction_id = "TX-L1"`, `occurred_at = "2026-10-10T12:00:00-05:00"`, `merchant = "Tienda Aurora"`, `amount = "85000.00"`, `currency = "COP"`, `status = "CONFIRMED"`, el `card_id` de la tarjeta y `masked_card = "**** 4321"`
+- **And** `transaction` trae `transaction_id = "TX-L1"`, `occurred_at = "2026-10-10T12:00:00-05:00"`, `merchant = "Tienda Aurora"`, `amount = "85000.00"`, `currency = "COP"`, `status = "CONFIRMED"`, el `card_id` de la tarjeta, `masked_card = "**** 4321"` y `merchant_country = "CO"`
 - **And** queda registrada exactamente 1 disputa `OPEN` sobre `TX-L1` con ese `dispute_id`
 - **And** la transacción sigue `CONFIRMED`, la tarjeta sigue activa y el estado de verificación de la conversación no cambia
 
@@ -340,11 +340,11 @@ Cubre: HU-004-06, RN-004-16
 | `status` | `string` | `OPEN` (una disputa recién abierta o devuelta por una repetición en esta versión). |
 | `opened_at` | `string` | Instante de apertura en ISO 8601 con zona de Bogotá (p. ej. `2026-10-17T10:00:00-05:00`). |
 | `reason` | `string` | Código del motivo (RN-004-02). |
-| `transaction` | `TransactionItem` | La transacción disputada, con exactamente los campos de `TransactionItem` de la spec 003 (RN-003-12). |
+| `transaction` | `TransactionItem` | La transacción disputada, con exactamente los campos de `TransactionItem` de la spec 003 (RN-003-12), incluido `merchant_country` (spec 007, RN-007-30). |
 
 Ejemplo:
 
-- Disputa abierta o repetición: `{"dispute_id": "...", "status": "OPEN", "opened_at": "2026-10-17T10:00:00-05:00", "reason": "UNRECOGNIZED_CHARGE", "transaction": {"transaction_id": "TX-L1", "occurred_at": "2026-10-10T12:00:00-05:00", "merchant": "Tienda Aurora", "amount": "85000.00", "currency": "COP", "status": "CONFIRMED", "card_id": "...", "masked_card": "**** 4321"}}`
+- Disputa abierta o repetición: `{"dispute_id": "...", "status": "OPEN", "opened_at": "2026-10-17T10:00:00-05:00", "reason": "UNRECOGNIZED_CHARGE", "transaction": {"transaction_id": "TX-L1", "occurred_at": "2026-10-10T12:00:00-05:00", "merchant": "Tienda Aurora", "amount": "85000.00", "currency": "COP", "status": "CONFIRMED", "card_id": "...", "masked_card": "**** 4321", "merchant_country": "CO"}}`
 
 **Errores** (formato `{code, message, retryable}`, `mcp-tools.md` §7; se evalúan en el orden de RN-004-10)
 
@@ -388,6 +388,7 @@ Ninguna.
 |---|---|---|---|
 | 0.1.0 | 2026-10-17 | Versión inicial a partir de la issue #29 | Juangiov (con Claude Code) |
 | 0.1.0 | 2026-10-17 | Spec aprobada por el usuario | Juangiov |
+| 0.2.0 | 2026-10-18 | Se añade `merchant_country` a `TransactionItem` en la salida (RN-004-12 y tabla de §7) (cambio compatible, spec [007](../007-dispute-resolution-agent/spec.md) §7.2, RN-007-30) | Juangiov (con Claude Code) |
 
 ---
 

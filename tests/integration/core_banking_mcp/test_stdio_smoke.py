@@ -198,7 +198,7 @@ async def test_ac_003_11_consultar_transacciones__stdio_server__unverified_conve
 # Regla: RN-004-12 — La respuesta exitosa contiene **solo** `dispute_id`, `status`, `opened_at`,
 #   `reason` (el código) y `transaction`, con exactamente los campos de `TransactionItem` de la
 #   spec 003 (RN-003-12): `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`,
-#   `status`, `card_id` y `masked_card`.
+#   `status`, `card_id`, `masked_card` y `merchant_country`.
 # AC-004-01 · Art. 7 (apertura de disputa por stdio real con las semillas; base temporal limpia)
 async def test_ac_004_01_iniciar_disputa__stdio_server__opens_dispute_on_seeded_transaction(
     tmp_path: Path,
@@ -250,8 +250,10 @@ async def test_ac_004_01_iniciar_disputa__stdio_server__opens_dispute_on_seeded_
         "status",
         "card_id",
         "masked_card",
+        "merchant_country",
     }
     assert content["transaction"]["transaction_id"] == "TX-000001"
+    assert content["transaction"]["merchant_country"] == "CO"
     assert "4111111111114321" not in result.model_dump_json()
 
 

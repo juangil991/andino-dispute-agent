@@ -95,11 +95,70 @@ async def test_ac_001_01_buscar_cliente__single_document__returns_one_customer()
                 "full_name": "Laura Méndez",
                 "masked_document": "****01",
                 "masked_cards": ["**** 4321", "**** 8765"],
+                "cards": [
+                    {"card_id": "CARD-0001", "masked_card": "**** 4321"},
+                    {"card_id": "CARD-0002", "masked_card": "**** 8765"},
+                ],
             }
         ],
         "refinement_required": False,
     }
     BuscarClienteOut.model_validate(structured)
+
+
+# Regla: RN-007-31 — Cada cliente devuelto por `buscar_cliente` incorpora `cards`: lista de
+# `{card_id, masked_card}` de sus tarjetas en cualquier estado, en el mismo orden que
+# `masked_cards`, que no cambia. No incluye el estado ni el número de la tarjeta.
+# AC-007-32 · Art. 7
+async def test_ac_007_32_buscar_cliente__customer_with_two_cards__returns_cards_with_card_id() -> (
+    None
+):
+    """AC-007-32: cada cliente trae `cards` con card_id y masked_card, sin PAN ni estado."""
+    customer = (
+        CustomerBuilder()
+        .with_id("C-0001")
+        .with_document("D-1001")
+        .with_card("4321", CardStatus.ACTIVE)
+        .with_card("8765", CardStatus.BLOCKED)
+        .build()
+    )
+
+    is_error, structured, text = await _call([customer], {"document": "D-1001"})
+
+    assert is_error is False
+    match = structured["customers"][0]
+    assert match["masked_cards"] == ["**** 4321", "**** 8765"]
+    assert match["cards"] == [
+        {"card_id": "CARD-0001", "masked_card": "**** 4321"},  # CARD-L1 en la spec
+        {"card_id": "CARD-0002", "masked_card": "**** 8765"},  # CARD-L2 en la spec
+    ]
+    assert all(set(card) == {"card_id", "masked_card"} for card in match["cards"])
+    assert "4111111111114321" not in text
+    assert "BLOCKED" not in text
+    assert "ACTIVE" not in text
+    BuscarClienteOut.model_validate(structured)
+
+
+# Regla: RN-007-31 — Cada cliente devuelto por `buscar_cliente` incorpora `cards`: lista de
+# `{card_id, masked_card}` de sus tarjetas en cualquier estado, en el mismo orden que
+# `masked_cards`, que no cambia. No incluye el estado ni el número de la tarjeta.
+# AC-007-32 · Art. 7
+async def test_ac_007_32_buscar_cliente__refinement_required__returns_no_cards() -> None:
+    """AC-007-32: con refinement_required = true no se devuelve ningún cliente ni tarjeta."""
+    customers = [
+        CustomerBuilder()
+        .with_id(f"C-{n:04d}")
+        .with_name("Ana Pérez")
+        .with_document(f"D-80{n}")
+        .with_card("4321")
+        .build()
+        for n in range(6)
+    ]
+
+    is_error, structured, _ = await _call(customers, {"full_name": "Ana Pérez"})
+
+    assert is_error is False
+    assert structured == {"customers": [], "refinement_required": True}
 
 
 # Regla: RN-001-04 - la tarjeta coincide por últimos 4 sin importar su estado.

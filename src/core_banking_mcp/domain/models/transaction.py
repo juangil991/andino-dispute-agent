@@ -57,8 +57,14 @@ class Transaction:
     amount: Decimal
     currency: str
     status: TransactionStatus
+    merchant_country: str = "CO"
 
     def __post_init__(self) -> None:
+        country = self.merchant_country
+        if not (
+            len(country) == 2 and country.isascii() and country.isalpha() and country.isupper()
+        ):
+            raise InvalidInputError("merchant_country", "debe ser un código ISO 3166-1 alfa-2")
         _require_text("transaction_id", self.transaction_id)
         _require_text("card_id", self.card_id)
         _require_text("merchant", self.merchant)

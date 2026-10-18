@@ -53,6 +53,7 @@ def to_transaction_item(transaction: Transaction) -> TransactionItemOut:
         status=transaction.status.value,
         card_id=transaction.card_id,
         masked_card=mask_card(transaction.card_last4),
+        merchant_country=transaction.merchant_country,
     )
 
 

@@ -21,6 +21,7 @@ def _tx(
     amount: str,
     currency: str,
     status: TransactionStatus,
+    merchant_country: str = "CO",
 ) -> Transaction:
     return Transaction(
         tx_id,
@@ -31,6 +32,7 @@ def _tx(
         Decimal(amount),
         currency,
         status,
+        merchant_country,
     )
 
 
@@ -38,7 +40,7 @@ SEED_TRANSACTIONS: tuple[Transaction, ...] = (
     _tx("TX-000001", "CARD-0001", "4321", (2026, 9, 5, 9, 15), "Supermercado La Cosecha",
         "185000.00", "COP", _CONFIRMED),
     _tx("TX-000002", "CARD-0001", "4321", (2026, 9, 12, 20, 40), "StreamFlix Andina",
-        "15.99", "USD", _CONFIRMED),
+        "15.99", "USD", _CONFIRMED, "US"),
     _tx("TX-000003", "CARD-0001", "4321", (2026, 9, 20, 14, 32), "Aerolínea Cóndor del Sur",
         "1250000.00", "COP", TransactionStatus.PENDING),
     _tx("TX-000004", "CARD-0001", "4321", (2026, 9, 25, 11, 5), "Farmacia Vida Plena",
@@ -53,6 +55,10 @@ SEED_TRANSACTIONS: tuple[Transaction, ...] = (
         "64000.00", "COP", _CONFIRMED),
     _tx("TX-000009", "CARD-0004", "5555", (2026, 8, 30, 16, 30), "Restaurante Fogón Criollo",
         "75000.00", "COP", _CONFIRMED),
+    _tx("TX-000010", "CARD-0001", "4321", (2026, 6, 1, 10, 0), "Hotel Pacífico Sur",
+        "300000.00", "COP", _CONFIRMED, "US"),
+    _tx("TX-000011", "CARD-0001", "4321", (2026, 10, 5, 16, 45), "Electro Hogar Andes",
+        "800000.00", "COP", _CONFIRMED),
 )  # fmt: skip
 
 

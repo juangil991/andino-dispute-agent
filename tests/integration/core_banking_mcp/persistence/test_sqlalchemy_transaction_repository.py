@@ -10,14 +10,22 @@ from tests.fakes.identity_builder import IdentityBuilder
 from tests.fakes.transaction_builder import TransactionBuilder
 
 from core_banking_mcp.domain.models.customer import Card, CardStatus, Customer
-from core_banking_mcp.domain.models.transaction import BogotaDateRange, TransactionStatus
+from core_banking_mcp.domain.models.transaction import (
+    BogotaDateRange,
+    Transaction,
+    TransactionStatus,
+)
 from core_banking_mcp.infrastructure.outbound.persistence.database import (
     create_engine_from_url,
     create_schema,
     session_factory,
 )
+from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import seed_database
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_dispute_repository import (
+    SqlAlchemyDisputeRepository,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
     SqlAlchemyTransactionRepository,
@@ -273,3 +281,61 @@ def test_ac_004_06_find_customer_transaction_matches_any_card_status(
 
     assert found is not None
     assert found.transaction_id == "TX-L1"
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO
+# 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia). Aparece en todas las
+# respuestas que incluyen `TransactionItem` (`consultar_transacciones`, `iniciar_disputa`,
+# `escalar_a_analista`). Toda transacción del core tiene país, también en las semillas.
+# AC-007-33 · Art. 3
+def test_ac_007_33_transaction_repository__merchant_country__round_trips(
+    customers: SqlAlchemyCustomerRepository,
+    repo: SqlAlchemyTransactionRepository,
+) -> None:
+    """AC-007-33: merchant_country "US" se conserva en la búsqueda por id y por rango."""
+    _customer(customers, "C-0001", "DOC-1", Card("4321", CardStatus.ACTIVE))
+    repo.add("CARD-0001", _tx("CARD-0001", "4321").with_merchant_country("US").build())
+
+    by_id = repo.find_customer_transaction("C-0001", "T-0001")
+    by_range = repo.find_transactions(["CARD-0001"], _FAR_PAST, _FAR_FUTURE, 51)
+
+    assert by_id is not None
+    assert by_id.merchant_country == "US"
+    assert [t.merchant_country for t in by_range] == ["US"]
+
+
+# Soporte de tests: semillas ficticias reproducibles con país del comercio · Art. 3
+# Invariante: Art. 1 — datos de prueba y semillas ficticios
+def test_seed_transactions__merchant_country__us_and_co_values(session: Session) -> None:
+    """Soporte: TX-000002 es US y TX-000010 y TX-000011 existen con los datos del plan §4."""
+    seed_database(
+        SqlAlchemyCustomerRepository(session),
+        SqlAlchemyTransactionRepository(session),
+        SqlAlchemyDisputeRepository(session),
+    )
+    transactions = SqlAlchemyTransactionRepository(session)
+
+    def _get(transaction_id: str) -> Transaction:
+        found = transactions.find_customer_transaction("C-0001", transaction_id)
+        assert found is not None
+        return found
+
+    assert _get("TX-000002").merchant_country == "US"
+    assert _get("TX-000001").merchant_country == "CO"
+    hotel = _get("TX-000010")
+    assert (hotel.merchant, hotel.merchant_country, hotel.amount, hotel.currency) == (
+        "Hotel Pacífico Sur",
+        "US",
+        Decimal("300000.00"),
+        "COP",
+    )
+    assert hotel.occurred_at == datetime(2026, 6, 1, 10, 0, tzinfo=_BOGOTA)
+    assert (hotel.status, hotel.card_id) == (TransactionStatus.CONFIRMED, "CARD-0001")
+    electro = _get("TX-000011")
+    assert (electro.merchant, electro.merchant_country, electro.amount) == (
+        "Electro Hogar Andes",
+        "CO",
+        Decimal("800000.00"),
+    )
+    assert electro.occurred_at == datetime(2026, 10, 5, 16, 45, tzinfo=_BOGOTA)
+    assert (electro.status, electro.card_id) == (TransactionStatus.CONFIRMED, "CARD-0001")

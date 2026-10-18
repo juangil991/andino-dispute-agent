@@ -99,7 +99,7 @@ def test_ac_002_01_seeded_customers_have_registered_dates() -> None:
 # Invariante: Art. 1 — datos semilla ficticios y reproducibles (se siembran una sola vez).
 # AC-003-01 · Art. 1
 def test_seed_database_seeds_transactions_once() -> None:
-    """Soporte: las 9 transacciones del plan §4 se siembran una sola vez, con sus card_ref."""
+    """Soporte: las 11 transacciones del plan §4 se siembran una sola vez, con sus card_ref."""
     session = _new_session()
     customers = SqlAlchemyCustomerRepository(session)
     transactions = SqlAlchemyTransactionRepository(session)
@@ -107,7 +107,7 @@ def test_seed_database_seeds_transactions_once() -> None:
     seed_database(customers, transactions, SqlAlchemyDisputeRepository(session))
     seed_database(customers, transactions, SqlAlchemyDisputeRepository(session))
 
-    assert session.scalar(select(func.count()).select_from(TransactionRow)) == 9
+    assert session.scalar(select(func.count()).select_from(TransactionRow)) == 11
     refs = {
         row.card_ref: row.last4
         for row in session.scalars(select(CardRow).order_by(CardRow.card_ref))

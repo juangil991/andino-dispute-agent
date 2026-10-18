@@ -140,6 +140,7 @@ def test_ac_006_01_escalar_a_analista__output__matches_schema_with_pending_statu
                 status="CONFIRMED",
                 card_id="CARD-L1",
                 masked_card="**** 4321",
+                merchant_country="CO",
             ),
             card=EscalationCardOut(card_id="CARD-L1", masked_card="**** 4321"),
             prior_actions=[],
@@ -282,3 +283,12 @@ def test_ac_006_19_escalar_a_analista__error_envelope__supports_internal_not_ret
     assert err.code is ErrorCode.INTERNAL
     assert err.retryable is False
     assert set(ToolErrorOut.model_json_schema()["properties"]) == {"code", "message", "retryable"}
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia).  # noqa: E501
+# AC-007-33 · Art. 7 (datos mínimos)
+def test_ac_007_33_escalar_a_analista__transaction_schema__has_merchant_country() -> None:
+    """AC-007-33: la transacción del resumen incluye merchant_country y es un esquema cerrado."""
+    item: dict[str, Any] = EscalarAnalistaOut.model_json_schema()["$defs"]["TransactionItemOut"]
+    assert "merchant_country" in item["properties"]
+    assert item["additionalProperties"] is False

@@ -55,6 +55,7 @@ _RESPONSE_FIELDS = {
     "status",
     "card_id",
     "masked_card",
+    "merchant_country",
 }
 
 
@@ -66,10 +67,12 @@ def _tx(
     amount: str = "100.00",
     currency: str = "COP",
     status: TransactionStatus = TransactionStatus.CONFIRMED,
+    merchant_country: str = "CO",
 ) -> tuple[str, Transaction]:
     built = (
         TransactionBuilder()
         .with_id(transaction_id)
+        .with_merchant_country(merchant_country)
         .with_card(card_id, "4321")
         .with_occurred_at(occurred_at)
         .with_amount(Decimal(amount))
@@ -170,6 +173,20 @@ async def test_ac_003_01_consultar_transacciones__september_range__lists_newest_
             assert set(item) == _RESPONSE_FIELDS
             assert item["masked_card"] == "**** 4321"
         assert structured["transactions"][0]["occurred_at"] == "2026-09-20T14:32:00-05:00"
+        ConsultarTransaccionesOut.model_validate(structured)
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia).  # noqa: E501
+# AC-007-33 · Art. 7
+async def test_ac_007_33_consultar_transacciones__us_merchant__returns_merchant_country() -> None:
+    """AC-007-33: el TransactionItem trae merchant_country = "US" y los campos de RN-003-12."""
+    async with _harness([_tx("TX-L1", _sept(10), merchant_country="US")]) as h:
+        is_error, structured, _ = await h.consult()
+
+        assert is_error is False
+        [item] = structured["transactions"]
+        assert item["merchant_country"] == "US"
+        assert set(item) == _RESPONSE_FIELDS
         ConsultarTransaccionesOut.model_validate(structured)
 
 

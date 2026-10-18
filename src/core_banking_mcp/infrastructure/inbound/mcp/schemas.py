@@ -41,6 +41,20 @@ class BuscarClienteIn(BaseModel):
     )
 
 
+class CustomerCardOut(BaseModel):
+    """Tarjeta de un cliente devuelta por `buscar_cliente` (card_id y forma enmascarada)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    card_id: str = Field(
+        description=(
+            "Identificador opaco de la tarjeta en el core; el mismo que usan "
+            "consultar_transacciones y bloquear_tarjeta."
+        )
+    )
+    masked_card: str = Field(description="Tarjeta enmascarada: '**** ' y sus 4 últimos dígitos.")
+
+
 class CustomerMatchOut(BaseModel):
     """Coincidencia de cliente con datos mínimos y enmascarados."""
 
@@ -51,6 +65,12 @@ class CustomerMatchOut(BaseModel):
     masked_document: str = Field(description="Documento enmascarado, p. ej. ****01.")
     masked_cards: list[str] = Field(
         description="Tarjetas del cliente en cualquier estado, enmascaradas (**** 4321)."
+    )
+    cards: list[CustomerCardOut] = Field(
+        description=(
+            "Tarjetas del cliente en cualquier estado, con su card_id y su forma enmascarada, "
+            "en el mismo orden que masked_cards. No incluye el estado ni el número."
+        )
     )
 
 
@@ -138,6 +158,11 @@ class TransactionItemOut(BaseModel):
         description="Identificador opaco de la tarjeta en el core; distingue tarjetas homónimas."
     )
     masked_card: str = Field(description="Tarjeta enmascarada: '**** ' y sus 4 últimos dígitos.")
+    merchant_country: str = Field(
+        description=(
+            "Código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (CO = Colombia)."
+        )
+    )
 
 
 class ConsultarTransaccionesOut(BaseModel):

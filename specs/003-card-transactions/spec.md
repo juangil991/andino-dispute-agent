@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `003-card-transactions` |
-| Versión | 0.1.0 |
+| Versión | 0.2.0 |
 | Estado | Aprobada |
 | Fecha | 2026-10-17 |
 | Origen | Issue [#28](https://github.com/juangil991/andino-dispute-agent/issues/28) del backlog (P0) |
@@ -64,7 +64,7 @@ Esta feature añade la herramienta `consultar_transacciones`. Es la primera herr
 | RN-003-09 | Se devuelven transacciones en cualquier estado: confirmada (`CONFIRMED`), pendiente (`PENDING`) o reversada (`REVERSED`). El monto es siempre el original y positivo; la reversión se ve solo en el estado. | Issue #28; clarificación 2026-10-17 |
 | RN-003-10 | Tope de 50 transacciones. Sin transacciones en el rango, la respuesta es exitosa con lista vacía y `refinement_required = false`. Con 1 a 50 se devuelven todas con `refinement_required = false`. Con más de 50, la respuesta es exitosa, **sin ninguna transacción** y con `refinement_required = true` para que se acote el rango. | Issue #28; `mcp-tools.md` §10 |
 | RN-003-11 | Las transacciones se ordenan de la más reciente a la más antigua por `occurred_at`; si dos tienen el mismo instante, por `transaction_id` ascendente (resultado determinista). | Issue #28; clarificación 2026-10-17; §5.3.6 |
-| RN-003-12 | Cada transacción devuelta contiene **solo**: `transaction_id`, `occurred_at`, `merchant`, `amount` (texto decimal positivo con exactamente 2 decimales, p. ej. `"125000.00"`), `currency` (código ISO 4217, p. ej. `COP`, `USD`), `status`, `card_id` (identificador opaco de la tarjeta en el core, no derivado de su número) y `masked_card` (`**** ` seguido de los 4 últimos dígitos, RN-001-09). | Issue #28; clarificación 2026-10-17 |
+| RN-003-12 | Cada transacción devuelta contiene **solo**: `transaction_id`, `occurred_at`, `merchant`, `amount` (texto decimal positivo con exactamente 2 decimales, p. ej. `"125000.00"`), `currency` (código ISO 4217, p. ej. `COP`, `USD`), `status`, `card_id` (identificador opaco de la tarjeta en el core, no derivado de su número), `masked_card` (`**** ` seguido de los 4 últimos dígitos, RN-001-09) y `merchant_country` (código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas; spec 007, RN-007-30). | Issue #28; clarificación 2026-10-17 |
 | RN-003-13 | La respuesta nunca contiene el número completo de ninguna tarjeta, el documento del cliente ni su nombre, ni datos de otros clientes. | Issue #28; Art. 7; `mcp-tools.md` §8 |
 | RN-003-14 | La herramienta es de solo lectura: no modifica transacciones, tarjetas ni el estado de verificación de la conversación (cliente verificado e intentos fallidos). | Art. 7; issue #28 |
 | RN-003-15 | Cada invocación genera exactamente un registro de auditoría con `conversation_id` (o vacío si no llegó), fecha y hora del reloj inyectado, `tool = "consultar_transacciones"`, tarjeta enmascarada (`**** NNNN`; vacía si `card_last4` no es válido, para no registrar lo que se haya escrito en ese campo), rango consultado (`date_from` y `date_to` recibidos) y resultado: `found` con la cantidad y los `transaction_id` devueltos (cantidad 0 si no hubo), `refinement_required`, o el código de error (`INVALID_INPUT`, `IDENTITY_NOT_VERIFIED`, `NOT_FOUND`, `INTERNAL`). El registro **nunca** contiene el número completo de una tarjeta. | Art. 8; issue #28 |
@@ -85,7 +85,7 @@ Cubre: HU-003-01, RN-003-01, RN-003-05, RN-003-11, RN-003-12
 - **Given** la tarjeta `4321` tiene 3 transacciones el 5, el 12 y el 20 de septiembre de 2026, y 1 transacción el 2 de octubre de 2026
 - **When** se invoca `consultar_transacciones`
 - **Then** la respuesta contiene exactamente las 3 transacciones de septiembre, en el orden 20, 12 y 5 de septiembre, con `refinement_required = false`
-- **And** cada transacción trae `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`, `status`, `card_id` y `masked_card = "**** 4321"`
+- **And** cada transacción trae `transaction_id`, `occurred_at`, `merchant`, `amount`, `currency`, `status`, `card_id`, `masked_card = "**** 4321"` y `merchant_country`
 - **And** la transacción del 2 de octubre no aparece
 
 ### AC-003-02 — Los días extremos del rango se incluyen, según la fecha de Bogotá
@@ -359,10 +359,11 @@ Cubre: HU-003-04, RN-003-16
 | `status` | `string` | `CONFIRMED`, `PENDING` o `REVERSED`. |
 | `card_id` | `string` | Identificador opaco de la tarjeta en el core, no derivado de su número; distingue tarjetas con los mismos últimos dígitos. |
 | `masked_card` | `string` | Tarjeta enmascarada: `**** ` seguido de sus 4 últimos dígitos. |
+| `merchant_country` | `string` | **Nuevo (spec 007, RN-007-30).** Código ISO 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia). |
 
 Ejemplos:
 
-- Con resultados: `{"transactions": [{"transaction_id": "...", "occurred_at": "2026-09-20T14:32:00-05:00", "merchant": "...", "amount": "125000.00", "currency": "COP", "status": "CONFIRMED", "card_id": "...", "masked_card": "**** 4321"}], "refinement_required": false}`
+- Con resultados: `{"transactions": [{"transaction_id": "...", "occurred_at": "2026-09-20T14:32:00-05:00", "merchant": "...", "amount": "125000.00", "currency": "COP", "status": "CONFIRMED", "card_id": "...", "masked_card": "**** 4321", "merchant_country": "CO"}], "refinement_required": false}`
 - Sin resultados: `{"transactions": [], "refinement_required": false}` (no es un error).
 - Más de 50: `{"transactions": [], "refinement_required": true}`.
 
@@ -406,6 +407,7 @@ Ninguna.
 |---|---|---|---|
 | 0.1.0 | 2026-10-17 | Versión inicial a partir de la issue #28 | Juangiov (con Claude Code) |
 | 0.1.0 | 2026-10-17 | Spec aprobada por el usuario | Juangiov |
+| 0.2.0 | 2026-10-18 | Se añade `merchant_country` a `TransactionItem` (RN-003-12 y tabla de §7) (cambio compatible, spec [007](../007-dispute-resolution-agent/spec.md) §7.2, RN-007-30) | Juangiov (con Claude Code) |
 
 ---
 

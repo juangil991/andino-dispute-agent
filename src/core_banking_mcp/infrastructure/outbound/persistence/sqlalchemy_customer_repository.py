@@ -79,5 +79,5 @@ def _to_entity(row: CustomerRow) -> Customer:
         customer_id=row.customer_id,
         full_name=row.full_name,
         document=row.document,
-        cards=tuple(Card(c.last4, CardStatus(c.status)) for c in row.cards),
+        cards=tuple(Card(c.last4, CardStatus(c.status), c.card_ref) for c in row.cards),
     )

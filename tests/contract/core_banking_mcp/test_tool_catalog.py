@@ -238,3 +238,37 @@ def test_ac_006_18_catalog_exposes_escalar_a_analista_with_spec_schemas() -> Non
     assert escalar.outputSchema["$defs"] == expected["$defs"]
     assert escalar.outputSchema["additionalProperties"] is False
     assert all(d["additionalProperties"] is False for d in escalar.outputSchema["$defs"].values())
+
+
+# Regla: RN-007-31 — Cada cliente devuelto por `buscar_cliente` incorpora `cards`: lista de
+# `{card_id, masked_card}` de sus tarjetas en cualquier estado, en el mismo orden que
+# `masked_cards`, que no cambia. `card_id` es el mismo identificador opaco que usan
+# `consultar_transacciones` y `bloquear_tarjeta`. No incluye el estado ni el número de la tarjeta.
+# AC-007-32 · Art. 7 (datos mínimos)
+def test_ac_007_32_catalog__buscar_cliente__exposes_cards() -> None:
+    """AC-007-32: el catálogo publica cards (CustomerCardOut) cerrado."""
+    tools = {t.name: t for t in _list_tools()}
+
+    buscar = tools["buscar_cliente"].outputSchema
+    assert buscar is not None
+    card = buscar["$defs"]["CustomerCardOut"]
+    assert set(card["properties"]) == {"card_id", "masked_card"}
+    assert card["additionalProperties"] is False
+    assert "cards" in buscar["$defs"]["CustomerMatchOut"]["properties"]
+
+
+# Regla: RN-007-30 — `TransactionItem` (RN-003-12) incorpora `merchant_country`: el código ISO
+# 3166-1 alfa-2 del país del comercio, en mayúsculas (`CO` = Colombia). Aparece en todas las
+# respuestas que incluyen `TransactionItem` (`consultar_transacciones`, `iniciar_disputa`,
+# `escalar_a_analista`). Toda transacción del core tiene país, también en las semillas.
+# AC-007-33 · Art. 7 (datos mínimos)
+def test_ac_007_33_catalog__transaction_item__exposes_merchant_country() -> None:
+    """AC-007-33: el catálogo publica merchant_country cerrado en TransactionItemOut."""
+    tools = {t.name: t for t in _list_tools()}
+
+    for name in ("consultar_transacciones", "iniciar_disputa", "escalar_a_analista"):
+        schema = tools[name].outputSchema
+        assert schema is not None
+        item = schema["$defs"]["TransactionItemOut"]
+        assert "merchant_country" in item["properties"], name
+        assert item["additionalProperties"] is False, name

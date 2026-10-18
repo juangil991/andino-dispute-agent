@@ -16,6 +16,7 @@ class CardStatus(Enum):
 class Card:
     last4: str
     status: CardStatus
+    card_id: str | None = None
 
     def __post_init__(self) -> None:
         if not (len(self.last4) == 4 and self.last4.isascii() and self.last4.isdigit()):

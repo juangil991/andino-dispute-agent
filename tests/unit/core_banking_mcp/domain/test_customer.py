@@ -23,6 +23,13 @@ def test_card_accepts_valid_last4() -> None:
     assert card.status is CardStatus.BLOCKED
 
 
+# Soporte de tests: Card expone card_id opcional · Art. 3
+def test_card_exposes_optional_card_id() -> None:
+    """Card expone card_id opcional, None por defecto."""
+    assert Card("4321", CardStatus.ACTIVE, card_id="CARD-0001").card_id == "CARD-0001"
+    assert Card("4321", CardStatus.ACTIVE).card_id is None
+
+
 def test_card_status_members() -> None:
     """AC-001-01: estados de tarjeta soportados."""
     assert {s.name for s in CardStatus} == {"ACTIVE", "BLOCKED", "CANCELLED"}

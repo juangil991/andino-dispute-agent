@@ -83,7 +83,9 @@ def test_ac_001_03_card_last4_matches_any_card_status(
 
     found = repo.find_matching(SearchCriteria.create(None, None, "4321"), 6)
 
-    assert found == [customer]
+    assert [(c.customer_id, [(k.last4, k.status) for k in c.cards]) for c in found] == [
+        (customer.customer_id, [(k.last4, k.status) for k in customer.cards])
+    ]
 
 
 # Regla: RN-001-02 - columnas normalizadas calculadas con el dominio (riesgo plan §7).
@@ -318,6 +320,7 @@ def test_create_schema_creates_transactions_table_with_plan_columns() -> None:
         "amount_minor",
         "currency",
         "status",
+        "merchant_country",
     }
     assert ("card_id", "occurred_at") in index_columns
 
@@ -336,3 +339,29 @@ def test_ac_002_14_find_matching_entities_do_not_expose_dates(
     assert len(found) == 1
     assert not hasattr(found[0], "birth_date")
     assert not hasattr(found[0], "document_issue_date")
+
+
+# Regla: RN-007-31 — Cada cliente devuelto por `buscar_cliente` incorpora `cards`: lista de
+# `{card_id, masked_card}` de sus tarjetas en cualquier estado, en el mismo orden que
+# `masked_cards`, que no cambia. `card_id` es el mismo identificador opaco que usan
+# `consultar_transacciones` y `bloquear_tarjeta`. No incluye el estado ni el número de la tarjeta.
+# AC-007-32 · Art. 3
+def test_ac_007_32_customer_repository__cards__expose_card_ref_as_card_id(
+    repo: SqlAlchemyCustomerRepository,
+) -> None:
+    """AC-007-32: find_matching devuelve cada Card con card_id igual a su card_ref, en orden."""
+    customer = (
+        CustomerBuilder()
+        .with_id("C-020")
+        .with_document("DOC-020")
+        .with_cards(Card("4321", CardStatus.ACTIVE), Card("8765", CardStatus.BLOCKED))
+        .build()
+    )
+    repo.add(customer, identity=IdentityBuilder().build())
+
+    found = repo.find_matching(SearchCriteria.create("DOC-020", None, None), 6)
+
+    assert [(c.last4, c.card_id) for c in found[0].cards] == [
+        ("4321", "CARD-0001"),
+        ("8765", "CARD-0002"),
+    ]
