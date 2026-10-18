@@ -158,6 +158,75 @@ def test_ac_003_17_event_without_masked_card_omits_optional_keys() -> None:
         assert key not in data
 
 
+def _bloqueo_event(with_fields: bool) -> AuditEvent:
+    return AuditEvent(
+        conversation_id="conv-5",
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        tool="bloquear_tarjeta",
+        input=None,
+        outcome="blocked" if with_fields else "rejected",
+        count=None,
+        customer_ids=(),
+        error_code=None,
+        rule=None,
+        reason=None,
+        customer_id="C-0001",
+        masked_card="**** 4321" if with_fields else None,
+        idempotency_key="key-1" if with_fields else None,
+        card_id="[REDACTED]" if with_fields else None,
+        block_reason="FRAUD_SUSPECTED" if with_fields else None,
+    )
+
+
+# Regla: RN-005-14 — Cada invocación genera exactamente un registro de auditoría con: `conversation_id` (vacío si no llegó); fecha y hora del reloj inyectado; `tool = "bloquear_tarjeta"`; el `card_id`, el `reason` y la `idempotency_key` recibidos (cada uno vacío si no es válido según RN-005-08, para no registrar lo que se haya escrito en ese campo); `masked_card` de la tarjeta solo si pertenece al cliente verificado (vacío en otro caso); y el resultado. El resultado es `blocked`, `replayed`, `already_blocked` o el código de error (`INVALID_INPUT`, `IDENTITY_NOT_VERIFIED`, `NOT_FOUND`, `CARD_NOT_BLOCKABLE`, `INTERNAL`). Como `card_id` e `idempotency_key` son texto libre, toda secuencia de 13 a 19 dígitos seguidos que contengan se registra sustituida por `[REDACTED]`. El registro **nunca** contiene el número completo de una tarjeta ni el documento del cliente.  # noqa: E501
+# AC-005-15 · Art. 8
+def test_ac_005_15_bloquear_tarjeta__event_with_block_fields__serialized_without_pan(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-005-15: línea JSON con los campos de bloqueo, sin PAN ni documento y nada en stdout."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_bloqueo_event(with_fields=True))
+
+    raw = stream.getvalue()
+    assert raw.count("\n") == 1
+    data = json.loads(raw)
+    assert data["tool"] == "bloquear_tarjeta"
+    assert data["card_id"] == "[REDACTED]"
+    assert data["block_reason"] == "FRAUD_SUSPECTED"
+    assert data["idempotency_key"] == "key-1"
+    assert data["masked_card"] == "**** 4321"
+    assert not re.search(r"\d{13,19}", raw)
+    assert capsys.readouterr().out == ""
+
+
+# Regla: RN-005-14 — Cada invocación genera exactamente un registro de auditoría con: `conversation_id` (vacío si no llegó); fecha y hora del reloj inyectado; `tool = "bloquear_tarjeta"`; el `card_id`, el `reason` y la `idempotency_key` recibidos (cada uno vacío si no es válido según RN-005-08, para no registrar lo que se haya escrito en ese campo); `masked_card` de la tarjeta solo si pertenece al cliente verificado (vacío en otro caso); y el resultado. El resultado es `blocked`, `replayed`, `already_blocked` o el código de error (`INVALID_INPUT`, `IDENTITY_NOT_VERIFIED`, `NOT_FOUND`, `CARD_NOT_BLOCKABLE`, `INTERNAL`). Como `card_id` e `idempotency_key` son texto libre, toda secuencia de 13 a 19 dígitos seguidos que contengan se registra sustituida por `[REDACTED]`. El registro **nunca** contiene el número completo de una tarjeta ni el documento del cliente.  # noqa: E501
+# Borde: `card_id` y `reason` vacíos (None) — la línea JSON omite esas claves.
+# AC-005-15 · Art. 8
+def test_ac_005_15_bloquear_tarjeta__event_without_block_fields__omits_keys() -> None:
+    """AC-005-15: con card_id y block_reason a None, la línea no trae esas claves."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_bloqueo_event(with_fields=False))
+
+    data = json.loads(stream.getvalue())
+    assert "card_id" not in data
+    assert "block_reason" not in data
+
+
+# Regla: RN-001-12 — los eventos de 001–004 no ganan claves nuevas (regresión).
+# AC-004-17 · Art. 8
+def test_ac_004_17_existing_events_keep_their_keys() -> None:
+    """AC-004-17: la línea de iniciar_disputa no incluye card_id ni block_reason."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_disputa_event(with_fields=True))
+
+    data = json.loads(stream.getvalue())
+    assert "card_id" not in data
+    assert "block_reason" not in data
+
+
 def _disputa_event(with_fields: bool) -> AuditEvent:
     return AuditEvent(
         conversation_id="conv-4",

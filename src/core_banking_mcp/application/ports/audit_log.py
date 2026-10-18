@@ -36,6 +36,8 @@ class AuditEvent:
     dispute_reason: str | None = None
     idempotency_key: str | None = None
     dispute_id: str | None = None
+    card_id: str | None = None
+    block_reason: str | None = None
 
 
 class AuditLogPort(Protocol):

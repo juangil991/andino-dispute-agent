@@ -5,11 +5,13 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy.engine import make_url
 
+from core_banking_mcp.application.use_cases.block_card import BlockCard
 from core_banking_mcp.application.use_cases.list_card_transactions import ListCardTransactions
 from core_banking_mcp.application.use_cases.open_dispute import OpenDispute
 from core_banking_mcp.application.use_cases.search_customers import SearchCustomers
 from core_banking_mcp.application.use_cases.verify_identity import VerifyIdentity
 from core_banking_mcp.config import CoreSettings
+from core_banking_mcp.infrastructure.inbound.mcp.card_tools import register_card_tools
 from core_banking_mcp.infrastructure.inbound.mcp.dispute_tools import register_dispute_tools
 from core_banking_mcp.infrastructure.inbound.mcp.identity_tools import register_identity_tools
 from core_banking_mcp.infrastructure.inbound.mcp.tools import register_tools
@@ -24,6 +26,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.database import (
     session_factory,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import seed_database
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_card_repository import (
+    SqlAlchemyCardRepository,
+)
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_repository import (
     SqlAlchemyCustomerRepository,
 )
@@ -73,11 +78,13 @@ def build_server(settings: CoreSettings | None = None) -> FastMCP:
         JsonAuditLog(),
         SystemClock(),
     )
+    block_card = BlockCard(SqlAlchemyCardRepository(session), store, JsonAuditLog(), SystemClock())
     mcp = FastMCP("core_banking_mcp")
     register_tools(mcp, search_customers)
     register_identity_tools(mcp, verify_identity)
     register_transaction_tools(mcp, list_card_transactions)
     register_dispute_tools(mcp, open_dispute)
+    register_card_tools(mcp, block_card)
     return mcp
 
 
