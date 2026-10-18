@@ -1,9 +1,11 @@
-"""Smoke test por stdio real del servidor core_banking_mcp (AC-001/002/003/004/005)."""
+"""Smoke test por stdio real del servidor core_banking_mcp (AC-001/002/003/004/005/006)."""
 
+import json
 import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from subprocess import PIPE
 
 import anyio
 from mcp import ClientSession, StdioServerParameters
@@ -51,6 +53,7 @@ async def test_ac_002_01_verificar_identidad__stdio_server__verifies_seeded_cust
         "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
+        "escalar_a_analista",
         "iniciar_disputa",
         "verificar_identidad",
     ]
@@ -459,3 +462,234 @@ async def test_ac_001_01_buscar_cliente__stdio_server__finds_seeded_customer(
     assert customer["masked_document"] == "****01"
     assert customer["masked_cards"] == ["**** 4321", "**** 8765"]
     assert "D-1001" not in result.model_dump_json()
+
+
+# Regla: RN-006-03 — La derivación **no** exige identidad verificada. Si la solicitud no trae datos
+#   del cliente, se registra en cualquier conversación: verificada, sin verificar, bloqueada por
+#   agotar sus intentos o desconocida para el servidor. Si trae algún dato del cliente
+#   (`transaction_id`, `card_id` o `dispute_id`), la conversación debe estar verificada en el
+#   servidor (estado de RN-002-13); si no, se rechaza con `IDENTITY_NOT_VERIFIED`. La verificación
+#   no se traslada: estar verificada en otra conversación no cuenta.
+# Regla: RN-006-08 — Una derivación nueva queda con un `escalation_id` opaco y único, no derivado
+#   del número de ninguna tarjeta; `status = PENDING`, que esta feature nunca cambia; `escalated_at`
+#   igual al instante del reloj inyectado en ISO 8601 con la zona de Bogotá (`−05:00`); el `reason`
+#   recibido; y un resumen. El resumen es **completo** si la conversación está verificada
+#   (`identity_verified = true`, `customer_id` del cliente verificado y los datos indicados) y
+#   **limitado** si no lo está (`identity_verified = false`, `customer_id`, `transaction`, `card` y
+#   `dispute_id` en `null` y `prior_actions` vacía). En ambos casos trae `conversation_id` y la
+#   nota, si la hay.
+# Regla: RN-006-14 — Derivar un caso solo registra la derivación y la clave de reintento usada. No
+#   cambia transacciones, tarjetas, disputas ni el estado de verificación de la conversación, sea
+#   cual sea el motivo o el contenido de la nota; no decide si el caso debe derivarse, no abre
+#   disputas ni bloquea tarjetas.
+# AC-006-04 · Art. 7 (derivación sin verificar por stdio real; base temporal limpia)
+async def test_ac_006_04_escalar_a_analista__stdio_server__unverified_conversation_gets_limited_summary(  # noqa: E501
+    tmp_path: Path,
+) -> None:
+    """AC-006-04: por stdio real, una conversación nunca verificada deriva con resumen limitado."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool(
+                "escalar_a_analista",
+                {
+                    "conversation_id": "conv-smoke-esc-b",
+                    "reason": "IDENTITY_VERIFICATION_FAILED",
+                    "idempotency_key": "key-esc-1",
+                },
+            )
+
+    assert not result.isError
+    assert result.structuredContent is not None
+    content = result.structuredContent
+    assert set(content) == {"escalation_id", "status", "escalated_at", "reason", "summary"}
+    assert content["escalation_id"]
+    assert content["status"] == "PENDING"
+    assert content["reason"] == "IDENTITY_VERIFICATION_FAILED"
+    assert content["escalated_at"].endswith("-05:00")
+    assert content["summary"] == {
+        "conversation_id": "conv-smoke-esc-b",
+        "identity_verified": False,
+        "customer_id": None,
+        "transaction": None,
+        "card": None,
+        "prior_actions": [],
+        "dispute_id": None,
+        "note": None,
+    }
+
+
+# Regla: RN-006-01 — La solicitud indica el motivo (`reason`) y una clave de reintento
+#   (`idempotency_key`) generada por el consumidor. Opcionalmente indica la transacción
+#   (`transaction_id`, devuelto por `consultar_transacciones`), la tarjeta (`card_id`, RN-003-12),
+#   las acciones previas (`prior_actions`), la disputa abierta (`dispute_id`, devuelto por
+#   `iniciar_disputa`) y una nota para el analista (`note`). `transaction_id`, `card_id` y
+#   `dispute_id` son **datos del cliente**.
+# Regla: RN-006-08 — Una derivación nueva queda con un `escalation_id` opaco y único, no derivado
+#   del número de ninguna tarjeta; `status = PENDING`, que esta feature nunca cambia; `escalated_at`
+#   igual al instante del reloj inyectado en ISO 8601 con la zona de Bogotá (`−05:00`); el `reason`
+#   recibido; y un resumen. El resumen es **completo** si la conversación está verificada
+#   (`identity_verified = true`, `customer_id` del cliente verificado y los datos indicados) y
+#   **limitado** si no lo está (`identity_verified = false`, `customer_id`, `transaction`, `card` y
+#   `dispute_id` en `null` y `prior_actions` vacía). En ambos casos trae `conversation_id` y la
+#   nota, si la hay.
+# Regla: RN-006-12 — La respuesta exitosa contiene **solo** `escalation_id`, `status`,
+#   `escalated_at`, `reason` y `summary`. `summary` contiene **solo** `conversation_id`,
+#   `identity_verified`, `customer_id`, `transaction` (con exactamente los campos de
+#   `TransactionItem` de la spec 003, RN-003-12, o `null`), `card` (con exactamente `card_id` y
+#   `masked_card`, `**** ` seguido de los 4 últimos dígitos, RN-001-09, o `null`), `prior_actions`,
+#   `dispute_id` y `note`.
+# AC-006-01 · Art. 7 (derivación de conversación verificada por stdio real sobre la tarjeta semilla)
+async def test_ac_006_01_escalar_a_analista__stdio_server__verified_conversation_gets_full_summary(  # noqa: E501
+    tmp_path: Path,
+) -> None:
+    """AC-006-01: por stdio real, tras verificar a C-0001, CARD-0001 se deriva con resumen completo."""  # noqa: E501
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad", {"conversation_id": "conv-smoke-esc", **_VERIFY_C0001}
+            )
+            result = await session.call_tool(
+                "escalar_a_analista",
+                {
+                    "conversation_id": "conv-smoke-esc",
+                    "reason": "FRAUD_SUSPECTED",
+                    "idempotency_key": "key-esc-2",
+                    "card_id": "CARD-0001",
+                },
+            )
+
+    assert not result.isError
+    assert result.structuredContent is not None
+    content = result.structuredContent
+    assert set(content) == {"escalation_id", "status", "escalated_at", "reason", "summary"}
+    assert content["escalation_id"]
+    assert "4321" not in content["escalation_id"]
+    assert content["status"] == "PENDING"
+    assert content["reason"] == "FRAUD_SUSPECTED"
+    assert datetime.fromisoformat(content["escalated_at"]).utcoffset() == timedelta(hours=-5)
+    summary = content["summary"]
+    assert set(summary) == {
+        "conversation_id",
+        "identity_verified",
+        "customer_id",
+        "transaction",
+        "card",
+        "prior_actions",
+        "dispute_id",
+        "note",
+    }
+    assert summary["conversation_id"] == "conv-smoke-esc"
+    assert summary["identity_verified"] is True
+    assert summary["customer_id"] == "C-0001"
+    assert summary["card"] == {"card_id": "CARD-0001", "masked_card": "**** 4321"}
+    assert summary["transaction"] is None
+    assert summary["prior_actions"] == []
+    assert summary["dispute_id"] is None
+    assert summary["note"] is None
+    assert "4111111111114321" not in result.model_dump_json()
+
+
+# Regla: RN-006-03 — La derivación **no** exige identidad verificada. Si la solicitud no trae datos
+#   del cliente, se registra en cualquier conversación: verificada, sin verificar, bloqueada por
+#   agotar sus intentos o desconocida para el servidor. Si trae algún dato del cliente
+#   (`transaction_id`, `card_id` o `dispute_id`), la conversación debe estar verificada en el
+#   servidor (estado de RN-002-13); si no, se rechaza con `IDENTITY_NOT_VERIFIED`. La verificación
+#   no se traslada: estar verificada en otra conversación no cuenta.
+# AC-006-05 · Art. 7 (sin identificación no se aceptan datos del cliente; almacén compartido)
+async def test_ac_006_05_escalar_a_analista__stdio_server__customer_data_without_verification_is_rejected(  # noqa: E501
+    tmp_path: Path,
+) -> None:
+    """AC-006-05: por stdio real, otra conversación con card_id recibe IDENTITY_NOT_VERIFIED."""
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(_params(tmp_path)) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            await session.call_tool(
+                "verificar_identidad", {"conversation_id": "conv-verified", **_VERIFY_C0001}
+            )
+            result = await session.call_tool(
+                "escalar_a_analista",
+                {
+                    "conversation_id": "conv-other",
+                    "reason": "FRAUD_SUSPECTED",
+                    "idempotency_key": "key-esc-3",
+                    "card_id": "CARD-0001",
+                },
+            )
+
+    assert result.structuredContent is not None
+    assert result.structuredContent["code"] == "IDENTITY_NOT_VERIFIED"
+    assert result.structuredContent["retryable"] is False
+    assert "escalation_id" not in result.structuredContent
+    assert "CARD-0001" not in result.model_dump_json()
+
+
+# Invariante: Art. 12 / mcp-tools §12 — nada a `stdout` salvo el protocolo MCP; los logs van a
+#   `stderr`. (Pendiente desde la auditoría de 005; se comprueba con un subproceso real del
+#   servidor tras una llamada que audita.)
+# Soporte de tests · Art. 12
+async def test_escalar_a_analista__audited_call__stdout_carries_only_protocol(
+    tmp_path: Path,
+) -> None:
+    """Cada línea de stdout del servidor es JSON-RPC válido."""
+    params = _params(tmp_path)
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "smoke", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "escalar_a_analista",
+                "arguments": {
+                    "conversation_id": "conv-smoke-stdout",
+                    "reason": "OTHER",
+                    "idempotency_key": "key-esc-4",
+                },
+            },
+        },
+    ]
+    payload = ("\n".join(json.dumps(r) for r in requests) + "\n").encode()
+
+    with anyio.fail_after(30):
+        process = await anyio.open_process(
+            [params.command, *params.args], env=params.env, stdin=PIPE, stdout=PIPE, stderr=PIPE
+        )
+        async with process:
+            assert process.stdin is not None
+            assert process.stdout is not None
+            await process.stdin.send(payload)
+            lines: list[str] = []
+            buffer = b""
+            while len(lines) < 2:
+                buffer += await process.stdout.receive()
+                *complete, buffer = buffer.split(b"\n")
+                lines.extend(line.decode() for line in complete if line.strip())
+            await process.stdin.aclose()
+            process.terminate()
+
+    assert len(lines) >= 2
+    for line in lines:
+        message = json.loads(line)
+        assert message["jsonrpc"] == "2.0"
+        assert "id" in message or "method" in message

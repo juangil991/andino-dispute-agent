@@ -38,6 +38,11 @@ class AuditEvent:
     dispute_id: str | None = None
     card_id: str | None = None
     block_reason: str | None = None
+    escalation_reason: str | None = None
+    escalation_id: str | None = None
+    note: str | None = None
+    prior_actions: tuple[str, ...] = ()
+    identity_verified: bool | None = None
 
 
 class AuditLogPort(Protocol):

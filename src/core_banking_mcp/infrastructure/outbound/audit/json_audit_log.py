@@ -20,6 +20,11 @@ _OPTIONAL_KEYS = (
     "dispute_id",
     "card_id",
     "block_reason",
+    "escalation_reason",
+    "escalation_id",
+    "note",
+    "prior_actions",
+    "identity_verified",
 )
 
 
@@ -34,6 +39,7 @@ class JsonAuditLog:
         payload["timestamp"] = event.timestamp.isoformat()
         payload["customer_ids"] = list(event.customer_ids)
         payload["transaction_ids"] = list(event.transaction_ids)
+        payload["prior_actions"] = list(event.prior_actions)
         for key in _OPTIONAL_KEYS:
             if payload[key] in (None, []):
                 del payload[key]

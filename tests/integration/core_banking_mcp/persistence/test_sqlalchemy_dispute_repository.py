@@ -1,5 +1,7 @@
 """Integración del repositorio de disputas sobre SQLite en memoria (AC-004-07, 08, 16)."""
 
+# ruff: noqa: E501  (los enunciados de RN de la trazabilidad se citan en una sola línea)
+
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -140,6 +142,22 @@ def test_ac_004_16_failed_add_rolls_back_and_session_stays_usable(
     assert repo.find_open_by_transaction("T-0002") is None
     valid = _add(repo, conversation="C", key="K-3", transaction="T-0002")
     assert repo.find_by_idempotency_key("C", "K-3") == valid
+
+
+# Regla: RN-006-06 — Las acciones previas se contrastan con el core: con `DISPUTE_OPENED`, la disputa `dispute_id` debe existir y ser de la transacción `transaction_id` (en cualquier estado de la disputa); con `CARD_BLOCKED`, la tarjeta `card_id` debe estar en estado `BLOCKED`. Si no se cumple ⇒ `NOT_FOUND` con el mensaje fijo de RN-006-04.
+# AC-006-08 · Art. 7 (identidad verificada)
+def test_ac_006_08_dispute_repository__find_by_id__returns_dispute_or_none(
+    repo: SqlAlchemyDisputeRepository,
+) -> None:
+    """AC-006-08: find_by_id devuelve la disputa con su transacción y estado, o None."""
+    created = _add(repo, status=DisputeStatus.CLOSED)
+
+    found = repo.find_by_id(created.dispute_id)
+    assert found == created
+    assert found is not None
+    assert found.transaction_id == "T-0001"
+    assert found.status is DisputeStatus.CLOSED
+    assert repo.find_by_id("D-9999") is None
 
 
 # Soporte de tests: identificadores DSP-NNNNNN consecutivos e instante de apertura

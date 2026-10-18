@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -65,6 +65,27 @@ class CardBlockRow(Base):
     idempotency_key: Mapped[str] = mapped_column(String)
     reason: Mapped[str] = mapped_column(String)
     blocked_at: Mapped[datetime] = mapped_column(DateTime)  # UTC sin zona
+
+
+class EscalationRow(Base):
+    __tablename__ = "escalations"
+    __table_args__ = (
+        Index("ux_escalations_conversation_key", "conversation_id", "idempotency_key", unique=True),
+    )
+
+    escalation_id: Mapped[str] = mapped_column(String, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String)
+    idempotency_key: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    escalated_at: Mapped[datetime] = mapped_column(DateTime)  # UTC sin zona
+    identity_verified: Mapped[bool] = mapped_column(Boolean)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.customer_id"))
+    transaction_id: Mapped[str | None] = mapped_column(ForeignKey("transactions.transaction_id"))
+    card_id: Mapped[int | None] = mapped_column(ForeignKey("cards.card_id"))
+    dispute_id: Mapped[str | None] = mapped_column(ForeignKey("disputes.dispute_id"))
+    prior_actions: Mapped[str] = mapped_column(String)  # códigos en orden de catálogo, con comas
+    note: Mapped[str | None] = mapped_column(String)
 
 
 class DisputeRow(Base):

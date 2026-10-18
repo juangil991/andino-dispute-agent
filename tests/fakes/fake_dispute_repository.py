@@ -32,6 +32,13 @@ class FakeDisputeRepository:
                 return d
         return None
 
+    def find_by_id(self, dispute_id: str) -> Dispute | None:
+        self.called = True
+        for d in self._disputes:
+            if d.dispute_id == dispute_id:
+                return d
+        return None
+
     def add(
         self,
         conversation_id: str,
