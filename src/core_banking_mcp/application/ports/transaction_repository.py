@@ -16,3 +16,9 @@ class TransactionRepository(Protocol):
     ) -> list[Transaction]:
         """Transacciones con start <= occurred_at < end, más recientes primero."""
         ...
+
+    def find_customer_transaction(
+        self, customer_id: str, transaction_id: str
+    ) -> Transaction | None:
+        """Transacción si pertenece a una tarjeta del cliente; None si no existe o es ajena."""
+        ...

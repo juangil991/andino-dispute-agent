@@ -24,6 +24,19 @@ def _naive_utc(instant: datetime) -> datetime:
     return instant.astimezone(UTC).replace(tzinfo=None)
 
 
+def _to_transaction(row: TransactionRow, card_ref: str, last4: str) -> Transaction:
+    return Transaction(
+        transaction_id=row.transaction_id,
+        card_id=card_ref,
+        card_last4=last4,
+        occurred_at=row.occurred_at.replace(tzinfo=UTC),
+        merchant=row.merchant,
+        amount=(Decimal(row.amount_minor) / _CENTS).quantize(_CENTS_STEP),
+        currency=row.currency,
+        status=TransactionStatus(row.status),
+    )
+
+
 class SqlAlchemyTransactionRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -69,15 +82,24 @@ class SqlAlchemyTransactionRepository:
             .limit(limit)
         )
         return [
-            Transaction(
-                transaction_id=row.transaction_id,
-                card_id=card_ref,
-                card_last4=last4,
-                occurred_at=row.occurred_at.replace(tzinfo=UTC),
-                merchant=row.merchant,
-                amount=(Decimal(row.amount_minor) / _CENTS).quantize(_CENTS_STEP),
-                currency=row.currency,
-                status=TransactionStatus(row.status),
-            )
+            _to_transaction(row, card_ref, last4)
             for row, card_ref, last4 in self._session.execute(stmt)
         ]
+
+    def find_customer_transaction(
+        self, customer_id: str, transaction_id: str
+    ) -> Transaction | None:
+        """Transacción si pertenece a una tarjeta del cliente (cualquier estado); si no, None."""
+        stmt = (
+            select(TransactionRow, CardRow.card_ref, CardRow.last4)
+            .join(CardRow, TransactionRow.card_id == CardRow.card_id)
+            .where(
+                CardRow.customer_id == customer_id,
+                TransactionRow.transaction_id == transaction_id,
+            )
+        )
+        found = self._session.execute(stmt).first()
+        if found is None:
+            return None
+        row, card_ref, last4 = found
+        return _to_transaction(row, card_ref, last4)

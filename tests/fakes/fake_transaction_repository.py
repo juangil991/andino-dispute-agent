@@ -31,3 +31,13 @@ class FakeTransactionRepository:
         matches.sort(key=lambda t: t.transaction_id)
         matches.sort(key=lambda t: t.occurred_at, reverse=True)
         return matches[:limit]
+
+    def find_customer_transaction(
+        self, customer_id: str, transaction_id: str
+    ) -> Transaction | None:
+        self.called = True
+        card_ids = {c.card_id for c in self._cards.get(customer_id, [])}
+        for t in self._transactions:
+            if t.transaction_id == transaction_id and t.card_id in card_ids:
+                return t
+        return None

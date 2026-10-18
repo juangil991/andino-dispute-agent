@@ -8,6 +8,7 @@ from core_banking_mcp.config import CoreSettings
 from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
     BuscarClienteOut,
     ConsultarTransaccionesOut,
+    IniciarDisputaOut,
     VerificarIdentidadOut,
 )
 from core_banking_mcp.server import build_server
@@ -30,7 +31,12 @@ def _list_tools() -> list[Tool]:
 def test_ac_002_01_catalog_exposes_buscar_cliente_and_verificar_identidad() -> None:
     """AC-002-01: list_tools devuelve solo buscar_cliente y verificar_identidad con sus esquemas."""
     tools = {t.name: t for t in _list_tools()}
-    assert sorted(tools) == ["buscar_cliente", "consultar_transacciones", "verificar_identidad"]
+    assert sorted(tools) == [
+        "buscar_cliente",
+        "consultar_transacciones",
+        "iniciar_disputa",
+        "verificar_identidad",
+    ]
     buscar, verificar = tools["buscar_cliente"], tools["verificar_identidad"]
 
     assert set(buscar.inputSchema["properties"]) == {
@@ -70,7 +76,12 @@ def test_ac_002_01_catalog_exposes_buscar_cliente_and_verificar_identidad() -> N
 def test_ac_003_14_catalog_exposes_consultar_transacciones_with_spec_schemas() -> None:
     """AC-003-14: list_tools incluye consultar_transacciones con esquemas de la spec 003 §7."""
     tools = {t.name: t for t in _list_tools()}
-    assert sorted(tools) == ["buscar_cliente", "consultar_transacciones", "verificar_identidad"]
+    assert sorted(tools) == [
+        "buscar_cliente",
+        "consultar_transacciones",
+        "iniciar_disputa",
+        "verificar_identidad",
+    ]
     consultar = tools["consultar_transacciones"]
 
     properties = consultar.inputSchema["properties"]
@@ -84,3 +95,41 @@ def test_ac_003_14_catalog_exposes_consultar_transacciones_with_spec_schemas() -
     assert consultar.outputSchema["properties"] == expected["properties"]
     assert consultar.outputSchema["additionalProperties"] is False
     assert consultar.outputSchema["$defs"]["TransactionItemOut"]["additionalProperties"] is False
+
+
+# Regla: RN-004-12 — la respuesta contiene solo `dispute_id`, `status`, `opened_at`, `reason` y
+#   `transaction` (parte de RN-004-12 que verifica este snapshot: los campos del esquema de salida).
+# Regla: RN-004-13 — la entrada y salida de la herramienta no exponen datos sensibles (parte que
+#   verifica este snapshot: salida cerrada con `additionalProperties: false`; entrada con sus 4
+#   campos documentados y el `enum` de `reason`); el catálogo expone solo las herramientas
+#   declaradas en spec §7.
+# AC-004-15 · Art. 7 (mínima exposición)
+def test_ac_004_15_catalog_exposes_iniciar_disputa_with_spec_schemas() -> None:
+    """AC-004-15: list_tools incluye iniciar_disputa con los esquemas de la spec 004 §7."""
+    tools = {t.name: t for t in _list_tools()}
+    assert sorted(tools) == [
+        "buscar_cliente",
+        "consultar_transacciones",
+        "iniciar_disputa",
+        "verificar_identidad",
+    ]
+    disputa = tools["iniciar_disputa"]
+
+    properties = disputa.inputSchema["properties"]
+    assert set(properties) == {"conversation_id", "transaction_id", "reason", "idempotency_key"}
+    assert not disputa.inputSchema.get("required")
+    assert all(properties[name].get("description") for name in properties)
+    assert "bligatorio" in properties["conversation_id"]["description"]
+    assert properties["reason"]["enum"] == [
+        "UNRECOGNIZED_CHARGE",
+        "DUPLICATE_CHARGE",
+        "INCORRECT_AMOUNT",
+        "NOT_RECEIVED",
+        "OTHER",
+    ]
+
+    assert disputa.outputSchema is not None
+    expected = IniciarDisputaOut.model_json_schema()
+    assert disputa.outputSchema["properties"] == expected["properties"]
+    assert disputa.outputSchema["additionalProperties"] is False
+    assert disputa.outputSchema["$defs"]["TransactionItemOut"]["additionalProperties"] is False

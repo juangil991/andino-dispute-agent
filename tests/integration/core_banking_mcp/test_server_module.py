@@ -1,4 +1,4 @@
-"""El atributo `server.mcp` es perezoso y expone ambas herramientas (plan 002 §1/§2, Art. 4)."""
+"""El atributo `server.mcp` es perezoso y expone las cuatro herramientas (Art. 4)."""
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -11,7 +11,7 @@ from core_banking_mcp import server
 def test_ac_002_01_server_mcp_attribute_is_lazy_and_exposes_both_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invariante Art. 4: importar server no construye nada; server.mcp es único, con dos tools."""
+    """Invariante Art. 4: importar server no construye nada; mcp único con cuatro tools."""
     monkeypatch.setenv("CORE_DATABASE_URL", "sqlite://")
     monkeypatch.setattr(server, "_mcp", None)
 
@@ -20,7 +20,12 @@ def test_ac_002_01_server_mcp_attribute_is_lazy_and_exposes_both_tools(
     assert isinstance(first, FastMCP)
     assert server.mcp is first  # type: ignore[attr-defined]
     names = sorted(tool.name for tool in first._tool_manager.list_tools())
-    assert names == ["buscar_cliente", "consultar_transacciones", "verificar_identidad"]
+    assert names == [
+        "buscar_cliente",
+        "consultar_transacciones",
+        "iniciar_disputa",
+        "verificar_identidad",
+    ]
 
     with pytest.raises(AttributeError):
         server.otro_nombre  # noqa: B018  # type: ignore[attr-defined]

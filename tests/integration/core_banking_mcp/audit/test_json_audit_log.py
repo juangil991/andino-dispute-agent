@@ -156,3 +156,58 @@ def test_ac_003_17_event_without_masked_card_omits_optional_keys() -> None:
     data = json.loads(stream.getvalue())
     for key in ("masked_card", "date_from", "date_to", "transaction_ids"):
         assert key not in data
+
+
+def _disputa_event(with_fields: bool) -> AuditEvent:
+    return AuditEvent(
+        conversation_id="conv-4",
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        tool="iniciar_disputa",
+        input=None,
+        outcome="created" if with_fields else "rejected",
+        count=None,
+        customer_ids=(),
+        error_code=None,
+        rule=None,
+        reason=None,
+        customer_id="C-0001",
+        transaction_id="[REDACTED]" if with_fields else None,
+        dispute_reason="fraude" if with_fields else None,
+        idempotency_key="key-1" if with_fields else None,
+        dispute_id="D-000001" if with_fields else None,
+    )
+
+
+# Regla: RN-004-16 — la auditoría de iniciar_disputa no incluye PAN ni documento; el transaction_id va redactado.  # noqa: E501
+# AC-004-17 · Art. 8
+def test_ac_004_17_iniciar_disputa_event_is_serialized_without_pan(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-004-17: línea JSON con los campos de disputa, sin PAN ni documento y nada en stdout."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_disputa_event(with_fields=True))
+
+    raw = stream.getvalue()
+    assert raw.count("\n") == 1
+    data = json.loads(raw)
+    assert data["tool"] == "iniciar_disputa"
+    assert data["transaction_id"] == "[REDACTED]"
+    assert data["dispute_reason"] == "fraude"
+    assert data["idempotency_key"] == "key-1"
+    assert data["dispute_id"] == "D-000001"
+    assert not re.search(r"\d{13,19}", raw)
+    assert capsys.readouterr().out == ""
+
+
+# Regla: RN-004-16 — sin los campos de disputa (borde: todos a None), la línea omite las claves.
+# AC-004-17 · Art. 8
+def test_ac_004_17_event_without_dispute_fields_omits_keys() -> None:
+    """AC-004-17: con los campos de disputa a None, la línea no trae sus claves."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_disputa_event(with_fields=False))
+
+    data = json.loads(stream.getvalue())
+    for key in ("transaction_id", "dispute_reason", "idempotency_key", "dispute_id"):
+        assert key not in data
