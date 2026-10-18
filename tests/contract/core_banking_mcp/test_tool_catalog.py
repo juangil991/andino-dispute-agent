@@ -9,6 +9,7 @@ from core_banking_mcp.infrastructure.inbound.mcp.schemas import (
     BloquearTarjetaOut,
     BuscarClienteOut,
     ConsultarTransaccionesOut,
+    EscalarAnalistaOut,
     IniciarDisputaOut,
     VerificarIdentidadOut,
 )
@@ -36,6 +37,7 @@ def test_ac_002_01_catalog_exposes_buscar_cliente_and_verificar_identidad() -> N
         "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
+        "escalar_a_analista",
         "iniciar_disputa",
         "verificar_identidad",
     ]
@@ -82,6 +84,7 @@ def test_ac_003_14_catalog_exposes_consultar_transacciones_with_spec_schemas() -
         "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
+        "escalar_a_analista",
         "iniciar_disputa",
         "verificar_identidad",
     ]
@@ -114,6 +117,7 @@ def test_ac_004_15_catalog_exposes_iniciar_disputa_with_spec_schemas() -> None:
         "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
+        "escalar_a_analista",
         "iniciar_disputa",
         "verificar_identidad",
     ]
@@ -155,6 +159,7 @@ def test_ac_005_13_catalog_exposes_bloquear_tarjeta_with_spec_schemas() -> None:
         "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
+        "escalar_a_analista",
         "iniciar_disputa",
         "verificar_identidad",
     ]
@@ -171,3 +176,65 @@ def test_ac_005_13_catalog_exposes_bloquear_tarjeta_with_spec_schemas() -> None:
     expected = BloquearTarjetaOut.model_json_schema()
     assert bloquear.outputSchema["properties"] == expected["properties"]
     assert bloquear.outputSchema["additionalProperties"] is False
+
+
+# Regla: RN-006-12 — La respuesta exitosa contiene **solo** `escalation_id`, `status`,
+#   `escalated_at`, `reason` y `summary`. `summary` contiene **solo** `conversation_id`,
+#   `identity_verified`, `customer_id`, `transaction` (con exactamente los campos de
+#   `TransactionItem` de la spec 003, RN-003-12, o `null`), `card` (con exactamente `card_id` y
+#   `masked_card`, `**** ` seguido de los 4 últimos dígitos, RN-001-09, o `null`), `prior_actions`,
+#   `dispute_id` y `note`. (Parte que verifica este snapshot: los campos de los esquemas de salida y
+#   de entrada.)
+# Regla: RN-006-13 — La respuesta nunca contiene el número completo de ninguna tarjeta, el documento
+#   del cliente ni su nombre, ni datos de otros clientes. (Parte que verifica este snapshot:
+#   esquemas de salida cerrados con `additionalProperties: false`; el catálogo expone solo las
+#   herramientas declaradas en spec §7.)
+# AC-006-18 · Art. 7 (mínima exposición)
+def test_ac_006_18_catalog_exposes_escalar_a_analista_with_spec_schemas() -> None:  # noqa: E501
+    """AC-006-18: list_tools incluye escalar_a_analista con los esquemas de la spec 006 §7."""
+    tools = {t.name: t for t in _list_tools()}
+    assert sorted(tools) == [
+        "bloquear_tarjeta",
+        "buscar_cliente",
+        "consultar_transacciones",
+        "escalar_a_analista",
+        "iniciar_disputa",
+        "verificar_identidad",
+    ]
+    escalar = tools["escalar_a_analista"]
+
+    properties = escalar.inputSchema["properties"]
+    assert set(properties) == {
+        "conversation_id",
+        "reason",
+        "idempotency_key",
+        "transaction_id",
+        "card_id",
+        "prior_actions",
+        "dispute_id",
+        "note",
+    }
+    assert not escalar.inputSchema.get("required")
+    assert all(properties[name].get("description") for name in properties)
+    assert "bligatorio" in properties["conversation_id"]["description"]
+    assert properties["reason"]["enum"] == [
+        "FRAUD_SUSPECTED",
+        "AMOUNT_OVER_THRESHOLD",
+        "INSUFFICIENT_OR_CONTRADICTORY_INFO",
+        "INCONCLUSIVE_RULES",
+        "UNRECOVERABLE_SYSTEM_FAILURE",
+        "IDENTITY_VERIFICATION_FAILED",
+        "OTHER",
+    ]
+    prior_actions = properties["prior_actions"]
+    items = prior_actions.get("items") or next(
+        option["items"] for option in prior_actions["anyOf"] if "items" in option
+    )
+    assert items["enum"] == ["DISPUTE_OPENED", "CARD_BLOCKED"]
+
+    assert escalar.outputSchema is not None
+    expected = EscalarAnalistaOut.model_json_schema()
+    assert escalar.outputSchema["properties"] == expected["properties"]
+    assert escalar.outputSchema["$defs"] == expected["$defs"]
+    assert escalar.outputSchema["additionalProperties"] is False
+    assert all(d["additionalProperties"] is False for d in escalar.outputSchema["$defs"].values())

@@ -25,6 +25,10 @@ class TransactionNotDisputableError(Exception):
     """La transacción no se puede disputar en su estado actual."""
 
 
+class EscalationDataNotFoundError(Exception):
+    """Algún dato indicado en la derivación no existe o no pertenece al cliente."""
+
+
 class DisputeAlreadyOpenError(Exception):
     """Ya existe una disputa abierta para la transacción."""
 

@@ -227,6 +227,80 @@ def test_ac_004_17_existing_events_keep_their_keys() -> None:
     assert "block_reason" not in data
 
 
+def _escalacion_event(with_fields: bool) -> AuditEvent:
+    return AuditEvent(
+        conversation_id="conv-6",
+        timestamp=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        tool="escalar_a_analista",
+        input=None,
+        outcome="escalated" if with_fields else "INVALID_INPUT",
+        count=None,
+        customer_ids=(),
+        error_code=None,
+        rule=None,
+        reason=None,
+        masked_card="**** 4321" if with_fields else None,
+        idempotency_key="key-1" if with_fields else None,
+        card_id="[REDACTED]" if with_fields else None,
+        escalation_reason="FRAUD_SUSPECTED" if with_fields else None,
+        escalation_id="ESC-000001" if with_fields else None,
+        note="tarjeta [REDACTED]" if with_fields else None,
+        prior_actions=("DISPUTE_OPENED", "CARD_BLOCKED") if with_fields else (),
+        identity_verified=False if with_fields else None,
+    )
+
+
+# Regla: RN-006-16 — Cada invocación genera exactamente un registro de auditoría con: `conversation_id` (vacío si no llegó); fecha y hora del reloj inyectado; `tool = "escalar_a_analista"`; el `reason`, la `idempotency_key`, el `transaction_id`, el `card_id`, el `dispute_id`, las `prior_actions` y la `note` recibidos (cada uno vacío si no llegó o no es válido según RN-006-10, para no registrar lo que se haya escrito en ese campo); `masked_card` de la tarjeta solo si pertenece al cliente verificado (vacío en otro caso); `identity_verified` (si la conversación estaba verificada); y el resultado. El resultado es `escalated` con el `escalation_id` creado, `replayed` con el `escalation_id` existente, o el código de error (`INVALID_INPUT`, `IDENTITY_NOT_VERIFIED`, `NOT_FOUND`, `INTERNAL`). Como `idempotency_key`, `transaction_id`, `card_id`, `dispute_id` y `note` son texto libre, toda secuencia de 13 a 19 dígitos seguidos que contengan se registra sustituida por `[REDACTED]`. El registro **nunca** contiene el número completo de una tarjeta ni el documento del cliente.  # noqa: E501
+# AC-006-20 · Art. 8
+def test_ac_006_20_json_audit_log__escalation_event__serialized_without_pan(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-006-20: línea JSON con los campos de derivación, sin PAN ni documento y sin stdout."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_escalacion_event(with_fields=True))
+
+    raw = stream.getvalue()
+    assert raw.count("\n") == 1
+    data = json.loads(raw)
+    assert data["tool"] == "escalar_a_analista"
+    assert data["escalation_reason"] == "FRAUD_SUSPECTED"
+    assert data["escalation_id"] == "ESC-000001"
+    assert data["prior_actions"] == ["DISPUTE_OPENED", "CARD_BLOCKED"]
+    assert data["note"] == "tarjeta [REDACTED]"
+    assert data["card_id"] == "[REDACTED]"
+    assert data["idempotency_key"] == "key-1"
+    assert data["masked_card"] == "**** 4321"
+    assert data["identity_verified"] is False
+    assert not re.search(r"\d{13,19}", raw)
+    assert capsys.readouterr().out == ""
+
+
+# Regla: RN-006-16 — Cada invocación genera exactamente un registro de auditoría con: `conversation_id` (vacío si no llegó); fecha y hora del reloj inyectado; `tool = "escalar_a_analista"`; el `reason`, la `idempotency_key`, el `transaction_id`, el `card_id`, el `dispute_id`, las `prior_actions` y la `note` recibidos (cada uno vacío si no llegó o no es válido según RN-006-10, para no registrar lo que se haya escrito en ese campo); `masked_card` de la tarjeta solo si pertenece al cliente verificado (vacío en otro caso); `identity_verified` (si la conversación estaba verificada); y el resultado. El resultado es `escalated` con el `escalation_id` creado, `replayed` con el `escalation_id` existente, o el código de error (`INVALID_INPUT`, `IDENTITY_NOT_VERIFIED`, `NOT_FOUND`, `INTERNAL`). Como `idempotency_key`, `transaction_id`, `card_id`, `dispute_id` y `note` son texto libre, toda secuencia de 13 a 19 dígitos seguidos que contengan se registra sustituida por `[REDACTED]`. El registro **nunca** contiene el número completo de una tarjeta ni el documento del cliente.  # noqa: E501
+# Borde: campos nuevos a None y prior_actions vacío — la línea omite esas claves.
+# AC-006-20 · Art. 8
+def test_ac_006_20_json_audit_log__escalation_event_without_optional_fields__omits_keys() -> None:
+    """AC-006-20: sin campos de derivación, la línea no trae sus claves; 001–005 no cambian."""
+    stream = io.StringIO()
+
+    JsonAuditLog(stream=stream).record(_escalacion_event(with_fields=False))
+    JsonAuditLog(stream=stream).record(_disputa_event(with_fields=True))
+
+    lines = stream.getvalue().splitlines()
+    escalation_line = json.loads(lines[0])
+    dispute_line = json.loads(lines[1])
+    new_keys = (
+        "escalation_reason",
+        "escalation_id",
+        "note",
+        "prior_actions",
+        "identity_verified",
+    )
+    for key in new_keys:
+        assert key not in escalation_line
+        assert key not in dispute_line
+
+
 def _disputa_event(with_fields: bool) -> AuditEvent:
     return AuditEvent(
         conversation_id="conv-4",

@@ -229,3 +229,84 @@ class BloquearTarjetaOut(BaseModel):
     already_blocked: bool = Field(
         description="True si la tarjeta ya estaba bloqueada y no se registró otro bloqueo."
     )
+
+
+ESCALATION_REASON_CODES: tuple[str, str, str, str, str, str, str] = (
+    "FRAUD_SUSPECTED",
+    "AMOUNT_OVER_THRESHOLD",
+    "INSUFFICIENT_OR_CONTRADICTORY_INFO",
+    "INCONCLUSIVE_RULES",
+    "UNRECOVERABLE_SYSTEM_FAILURE",
+    "IDENTITY_VERIFICATION_FAILED",
+    "OTHER",
+)
+
+PRIOR_ACTION_CODES: tuple[str, str] = ("DISPUTE_OPENED", "CARD_BLOCKED")
+
+
+class EscalationCardOut(BaseModel):
+    """Tarjeta indicada en el resumen de una derivación."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    card_id: str = Field(description="Identificador opaco de la tarjeta en el core.")
+    masked_card: str = Field(description="Tarjeta enmascarada: '**** ' y sus 4 últimos dígitos.")
+
+
+class EscalationSummaryOut(BaseModel):
+    """Resumen estructurado de una derivación (completo o limitado)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str = Field(description="Conversación que originó la derivación.")
+    identity_verified: bool = Field(
+        description="True si la conversación estaba verificada (resumen completo)."
+    )
+    customer_id: str | None = Field(
+        description="Identificador del cliente verificado; null en un resumen limitado."
+    )
+    transaction: TransactionItemOut | None = Field(
+        description="La transacción indicada; null si no se indicó."
+    )
+    card: EscalationCardOut | None = Field(
+        description="La tarjeta indicada (card_id y masked_card); null si no se indicó."
+    )
+    prior_actions: list[Literal["DISPUTE_OPENED", "CARD_BLOCKED"]] = Field(
+        description="Acciones previas indicadas (DISPUTE_OPENED, CARD_BLOCKED); vacía si ninguna."
+    )
+    dispute_id: str | None = Field(
+        description="Disputa abierta indicada con DISPUTE_OPENED; null si no."
+    )
+    note: str | None = Field(
+        description=(
+            "Nota recortada y con números de tarjeta sustituidos por [REDACTED]; null si no hay."
+        )
+    )
+
+
+class EscalarAnalistaOut(BaseModel):
+    """Salida de `escalar_a_analista`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    escalation_id: str = Field(
+        description="Identificador opaco de la derivación, no derivado del número de tarjeta."
+    )
+    status: Literal["PENDING"] = Field(
+        description="Estado de la derivación: PENDING (pendiente de atención por un analista)."
+    )
+    escalated_at: str = Field(
+        description=(
+            "Instante de la derivación ISO 8601 con zona (p. ej. 2026-10-17T10:00:00-05:00)."
+        )
+    )
+    reason: Literal[
+        "FRAUD_SUSPECTED",
+        "AMOUNT_OVER_THRESHOLD",
+        "INSUFFICIENT_OR_CONTRADICTORY_INFO",
+        "INCONCLUSIVE_RULES",
+        "UNRECOVERABLE_SYSTEM_FAILURE",
+        "IDENTITY_VERIFICATION_FAILED",
+        "OTHER",
+    ] = Field(description="Código del motivo de la derivación.")
+    summary: EscalationSummaryOut = Field(description="Resumen estructurado para el analista.")

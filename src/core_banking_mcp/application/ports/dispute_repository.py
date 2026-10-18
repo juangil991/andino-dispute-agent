@@ -15,6 +15,10 @@ class DisputeRepository(Protocol):
         """Disputa vigente (ni CLOSED ni REJECTED) de la transacción, si existe."""
         ...
 
+    def find_by_id(self, dispute_id: str) -> Dispute | None:
+        """Disputa con ese identificador, si existe."""
+        ...
+
     def add(
         self,
         conversation_id: str,

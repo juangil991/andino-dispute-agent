@@ -1,4 +1,4 @@
-"""El atributo `server.mcp` es perezoso y expone las cinco herramientas (Art. 4)."""
+"""El atributo `server.mcp` es perezoso y expone las seis herramientas (Art. 4)."""
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -11,7 +11,7 @@ from core_banking_mcp import server
 def test_ac_002_01_server_mcp_attribute_is_lazy_and_exposes_all_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invariante Art. 4: importar server no construye nada; mcp único con cinco tools."""
+    """Invariante Art. 4: importar server no construye nada; mcp único con seis tools."""
     monkeypatch.setenv("CORE_DATABASE_URL", "sqlite://")
     monkeypatch.setattr(server, "_mcp", None)
 
@@ -24,6 +24,7 @@ def test_ac_002_01_server_mcp_attribute_is_lazy_and_exposes_all_tools(
         "bloquear_tarjeta",
         "buscar_cliente",
         "consultar_transacciones",
+        "escalar_a_analista",
         "iniciar_disputa",
         "verificar_identidad",
     ]

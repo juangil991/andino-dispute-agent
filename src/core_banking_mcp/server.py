@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from sqlalchemy.engine import make_url
 
 from core_banking_mcp.application.use_cases.block_card import BlockCard
+from core_banking_mcp.application.use_cases.escalate_to_analyst import EscalateToAnalyst
 from core_banking_mcp.application.use_cases.list_card_transactions import ListCardTransactions
 from core_banking_mcp.application.use_cases.open_dispute import OpenDispute
 from core_banking_mcp.application.use_cases.search_customers import SearchCustomers
@@ -13,6 +14,9 @@ from core_banking_mcp.application.use_cases.verify_identity import VerifyIdentit
 from core_banking_mcp.config import CoreSettings
 from core_banking_mcp.infrastructure.inbound.mcp.card_tools import register_card_tools
 from core_banking_mcp.infrastructure.inbound.mcp.dispute_tools import register_dispute_tools
+from core_banking_mcp.infrastructure.inbound.mcp.escalation_tools import (
+    register_escalation_tools,
+)
 from core_banking_mcp.infrastructure.inbound.mcp.identity_tools import register_identity_tools
 from core_banking_mcp.infrastructure.inbound.mcp.tools import register_tools
 from core_banking_mcp.infrastructure.inbound.mcp.transaction_tools import (
@@ -34,6 +38,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_customer_re
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_dispute_repository import (
     SqlAlchemyDisputeRepository,
+)
+from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_escalation_repository import (
+    SqlAlchemyEscalationRepository,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction_repository import (
     SqlAlchemyTransactionRepository,
@@ -79,12 +86,22 @@ def build_server(settings: CoreSettings | None = None) -> FastMCP:
         SystemClock(),
     )
     block_card = BlockCard(SqlAlchemyCardRepository(session), store, JsonAuditLog(), SystemClock())
+    escalate_to_analyst = EscalateToAnalyst(
+        SqlAlchemyTransactionRepository(session),
+        SqlAlchemyCardRepository(session),
+        SqlAlchemyDisputeRepository(session),
+        SqlAlchemyEscalationRepository(session),
+        store,
+        JsonAuditLog(),
+        SystemClock(),
+    )
     mcp = FastMCP("core_banking_mcp")
     register_tools(mcp, search_customers)
     register_identity_tools(mcp, verify_identity)
     register_transaction_tools(mcp, list_card_transactions)
     register_dispute_tools(mcp, open_dispute)
     register_card_tools(mcp, block_card)
+    register_escalation_tools(mcp, escalate_to_analyst)
     return mcp
 
 

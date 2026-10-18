@@ -38,6 +38,10 @@ class SqlAlchemyDisputeRepository:
         )
         return None if row is None else _to_domain(row)
 
+    def find_by_id(self, dispute_id: str) -> Dispute | None:
+        row = self._session.scalar(select(DisputeRow).where(DisputeRow.dispute_id == dispute_id))
+        return None if row is None else _to_domain(row)
+
     def find_open_by_transaction(self, transaction_id: str) -> Dispute | None:
         row = self._session.scalar(
             select(DisputeRow).where(
