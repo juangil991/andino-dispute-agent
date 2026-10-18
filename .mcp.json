@@ -1,5 +1,13 @@
 {
   "mcpServers": {
+    "core_banking_mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "core_banking_mcp.server"],
+      "env": {
+        "CORE_DATABASE_URL": "${CORE_DATABASE_URL:-sqlite:///./data/core_banking.db}"
+      }
+    },
     "github": {
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",

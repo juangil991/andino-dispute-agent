@@ -14,6 +14,7 @@ secrets/
 # Configuración personal de Claude Code
 CLAUDE.local.md
 .claude/settings.local.json
+.claude/state/
 
 # Material del enunciado (no forma parte de la solución)
 Prueba*.pdf
@@ -23,6 +24,10 @@ Prueba*.pdf
 Thumbs.db
 .vscode/
 .idea/
+
+# Base de datos SQLite del core simulado (se regenera con las semillas)
+data/
+*.db
 
 # Logs
 *.log

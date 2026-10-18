@@ -3,7 +3,7 @@ name: sdd-feature
 description: Orquesta el flujo SDD completo de una feature: crea la spec y, tras cada aprobación del usuario, el plan y las tareas; luego implementa las tareas con subagentes task-implementer (independientes en paralelo, dependientes en cadena). Crea la rama de la feature tras la spec y, al cerrar, ofrece abrir un pull request. Usar cuando el usuario pida el flujo completo o de punta a punta de una feature, retomar una feature a medias, o invoque /sdd-feature <descripción o NNN>. Con `--backlog` toma la siguiente spec por prioridad del tablero de GitHub (estado Ready).
 argument-hint: <descripción de la feature | NNN para retomar | --backlog>
 model: claude-opus-5-5
-allowed-tools: Read, Write, Edit, Glob, Grep, Agent, AskUserQuestion, Skill, Bash(git status:*), Bash(git branch:*), Bash(git switch:*), Bash(git add:*), Bash(git commit:*), Bash(git push -u origin feature/*), Bash(uv run pytest:*), Bash(uv run ruff:*), Bash(uv run mypy:*), PowerShell(git status:*), PowerShell(git branch:*), PowerShell(git switch:*), PowerShell(git add:*), PowerShell(git commit:*), PowerShell(git push -u origin feature/*), PowerShell(uv run pytest:*), PowerShell(uv run ruff:*), PowerShell(uv run mypy:*), mcp__github__create_pull_request, mcp__github__projects_list, mcp__github__projects_write
+allowed-tools: Read, Write, Edit, Glob, Grep, Agent, AskUserQuestion, Skill, Bash(git status:*), Bash(git branch:*), Bash(git switch:*), Bash(git fetch origin main), Bash(git add:*), Bash(git commit:*), Bash(git push -u origin feature/*), Bash(uv run pytest:*), Bash(uv run ruff:*), Bash(uv run mypy:*), PowerShell(git status:*), PowerShell(git branch:*), PowerShell(git switch:*), PowerShell(git fetch origin main), PowerShell(git add:*), PowerShell(git commit:*), PowerShell(git push -u origin feature/*), PowerShell(uv run pytest:*), PowerShell(uv run ruff:*), PowerShell(uv run mypy:*), mcp__github__create_pull_request, mcp__github__projects_list, mcp__github__projects_write
 ---
 
 # /sdd-feature — Flujo SDD completo
@@ -26,7 +26,7 @@ Reglas del orquestador:
 Usa solo los permisos que la tarea en curso necesita (`allowed-tools` del frontmatter):
 
 - **Escritura** solo en `specs/NNN-feature-name/`. Nunca en `src/`, `tests/`, `docs/constitution.md` ni `.claude/`.
-- **Git** limitado a: ver estado, crear o cambiar a `feature/NNN-*`, `add`/`commit` de los archivos de la feature y push de esa rama. Prohibido: force-push, reset, rebase, borrar ramas, push a `main` y merge de PRs.
+- **Git** limitado a: ver estado, `git fetch origin main`, crear o cambiar a `feature/NNN-*`, `add`/`commit` de los archivos de la feature y push de esa rama. Prohibido: force-push, reset, rebase, borrar ramas, push a `main` y merge de PRs.
 - **GitHub**: `create_pull_request` solo tras confirmación del usuario; lectura del proyecto 2 de `juangil991` (`projects_list`); y `projects_write` **solo para el campo Status del ítem tomado**. Nunca crear ni borrar ítems ni editar otros campos.
 - **Subagentes**: pásales únicamente la ruta de la feature, su tarea y sus archivos permitidos.
 - Si una acción requiere un permiso fuera de esta lista, pídelo al usuario; no lo amplíes por tu cuenta.
@@ -82,7 +82,7 @@ Se ejecuta en cuanto existe `specs/NNN-feature-name/` (tras `specify`), antes de
 
 1. Nombre: `feature/NNN-feature-name` (carpeta de la spec).
 2. Si `git status` muestra cambios ajenos a `specs/NNN-*/`, avisa al usuario antes de crear la rama.
-3. `git switch -c feature/NNN-feature-name`; si ya existe, `git switch feature/NNN-feature-name`. Si estás en `HEAD` desacoplado, parte de `main`.
+3. Si la rama ya existe, `git switch feature/NNN-feature-name` sin tocarla. Si no existe, actualiza main primero: `git fetch origin main` y crea la rama desde la punta remota con `git switch -c feature/NNN-feature-name origin/main` (también si estás en `HEAD` desacoplado). El fetch no modifica el árbol de trabajo. Si el fetch falla (sin remoto o sin red), repórtalo y detente sin crear la rama desde una base desactualizada.
 4. Informa la rama en una línea.
 
 ## 2. Plan
@@ -125,11 +125,17 @@ Se ejecuta en cuanto existe `specs/NNN-feature-name/` (tras `specify`), antes de
 
 1. Si la última tarea es la de verificación final y sus dependencias están `[x]`, ejecútala tú: `uv run pytest --cov`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy --strict src`.
 2. Marca el checklist "Cierre de la feature" de `tasks.md` **solo** con lo que realmente pasó.
-3. Reporta: tareas terminadas / bloqueadas / no ejecutadas (con motivo), cobertura obtenida, fallos con su salida y, si queda trabajo, cómo retomar (`/sdd-feature NNN`). Si se creó el PR (fase 6), incluye rama y URL.
+3. Reporta: tareas terminadas / bloqueadas / no ejecutadas (con motivo), cobertura obtenida, veredicto de la auditoría de AC (5.5) con su conteo de hallazgos, fallos con su salida y, si queda trabajo, cómo retomar (`/sdd-feature NNN`). Si se creó el PR (fase 6), incluye rama y URL.
+
+## 5.5 Auditoría de cobertura de AC
+
+1. Si todas las tareas están `[x]`, invoca la skill `verify-ac-coverage` con `NNN` antes de cualquier pregunta sobre el PR.
+2. `Cumple` → continúa a la fase 6.
+3. `No cumple` → muestra los hallazgos Bloqueantes y Mayores y **no ofrezcas el PR**. Pregunta con `AskUserQuestion`: **Corregir (Recommended)** (vuelve a la fase 4 con tareas para los hallazgos; si el defecto está en la spec, a la fase 1) / **Solo commit local** / **Detener**. Tras corregir, vuelve a invocar `verify-ac-coverage`: la segunda ejecución es la fase 2 y solo verifica que los hallazgos `H-NN` de la primera se corrigieron (no abre hallazgos nuevos).
 
 ## 6. Pull request
 
-1. Si hay tareas bloqueadas o fallidas, menciónalo en la pregunta; no abras el PR en silencio.
+1. El PR exige un veredicto `Cumple` de 5.5 posterior al último cambio en `tests/` o en la spec; lo impone el hook `.claude/hooks/ac_coverage_gate.py`, que bloquea la pregunta y la creación del PR. Si hay tareas bloqueadas o fallidas, menciónalo en la pregunta; no abras el PR en silencio.
 2. Pregunta con `AskUserQuestion`:
    - **Crear PR (Recommended)**
    - **Solo commit local**
@@ -137,7 +143,7 @@ Se ejecuta en cuanto existe `specs/NNN-feature-name/` (tras `specify`), antes de
 3. Si elige PR:
    1. Muestra `git status` y haz commit solo de los archivos de la feature (mensaje `feat(NNN): <título de la spec>`).
    2. `git push -u origin feature/NNN-feature-name`.
-   3. Crea el PR contra `main` con `mcp__github__create_pull_request` (alternativa: `gh pr create`). Título = título de la spec; cuerpo = resumen de la spec, tareas hechas/bloqueadas, cobertura y resultado de ruff/mypy; añade `Closes #N` si la spec viene de una issue del backlog.
+   3. Crea el PR contra `main` con `mcp__github__create_pull_request` (alternativa: `gh pr create`). Título = título de la spec; cuerpo = resumen de la spec, tareas hechas/bloqueadas, cobertura, veredicto de `verify-ac-coverage` y resultado de ruff/mypy; añade `Closes #N` si la spec viene de una issue del backlog.
    4. Si la spec vino del backlog, `projects_write` → Status = **In review**.
    5. Devuelve la URL del PR.
 4. Si no hay remoto `origin` o el push falla, repórtalo y detente sin forzar nada.

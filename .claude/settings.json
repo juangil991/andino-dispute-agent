@@ -6,7 +6,37 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python .claude/hooks/check_mcp_boundaries.py"
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_mcp_boundaries.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion|mcp__github__create_pull_request|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/ac_coverage_gate.py\" gate"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/ac_coverage_gate.py\" record"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/ac_coverage_gate.py\" subagent"
           }
         ]
       }
