@@ -18,6 +18,7 @@ from dispute_agent.application.use_cases.handle_customer_message import HandleCu
 from dispute_agent.config import AgentSettings
 from dispute_agent.domain.policies.dispute_policy import DisputePolicy
 from dispute_agent.infrastructure.inbound.web.api.chat_router import build_chat_router
+from dispute_agent.infrastructure.inbound.web.page_router import build_page_router, static_files
 from dispute_agent.infrastructure.outbound.audit.json_audit_log import JsonAuditLog
 from dispute_agent.infrastructure.outbound.clock.system_clock import SystemClock
 from dispute_agent.infrastructure.outbound.ids.uuid_generator import Uuid4Generator
@@ -110,6 +111,8 @@ def create_app(
 
     app = FastAPI(title="dispute_agent", lifespan=lifespan)
     app.include_router(build_chat_router(handle_message))
+    app.include_router(build_page_router())
+    app.mount("/static", static_files(), name="static")
     return app
 
 

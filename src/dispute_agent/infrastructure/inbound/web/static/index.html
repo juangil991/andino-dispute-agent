@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Banco Andino — Asistente de disputas</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="chat">
+    <h1>Banco Andino — Asistente de disputas</h1>
+
+    <div id="conversation" class="conversation" role="log" aria-live="polite">
+      <p id="typing" class="typing" hidden>El agente está escribiendo…</p>
+      <div id="notices" class="notices"></div>
+    </div>
+
+    <div id="actions" class="actions">
+      <button id="retry" type="button" hidden>Reintentar</button>
+      <button id="new-conversation" type="button" hidden>Iniciar una conversación nueva</button>
+    </div>
+
+    <form id="composer" class="composer">
+      <label for="message">Escribe tu mensaje</label>
+      <textarea id="message" name="message" rows="3" maxlength="2000"></textarea>
+      <p id="counter" class="counter" hidden></p>
+      <button id="send" type="submit">Enviar</button>
+    </form>
+  </main>
+  <script src="/static/chat.js"></script>
+</body>
+</html>

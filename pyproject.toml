@@ -23,6 +23,8 @@ dev = [
     "mypy",
     "pre-commit",
     "httpx>=0.27,<1",
+    "pytest-playwright>=0.5,<1",
+    "playwright>=1.48,<2",
 ]
 
 [build-system]
@@ -37,7 +39,10 @@ asyncio_mode = "auto"
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-m 'not llm'"
-markers = ["llm: pruebas con Claude real (opcionales)"]
+markers = [
+    "llm: pruebas con Claude real (opcionales)",
+    "browser: pruebas de navegador (Playwright + Chromium) de la página de chat",
+]
 
 [tool.ruff]
 line-length = 100
