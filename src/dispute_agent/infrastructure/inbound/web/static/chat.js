@@ -57,14 +57,38 @@ function createBubble(author, text) {
   return bubble;
 }
 
+// La conversación sigue al último mensaje mientras la cliente no suba a releer: si se aleja del
+// final se deja de seguir, y enviar un mensaje propio vuelve a seguirlo.
+const FOLLOW_MARGIN_PX = 48;
+let following = true;
+
+conversation.addEventListener("scroll", () => {
+  following =
+    conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight <=
+    FOLLOW_MARGIN_PX;
+});
+
+function scrollToEnd(force) {
+  if (force) {
+    following = true;
+  }
+  if (following) {
+    conversation.scrollTop = conversation.scrollHeight;
+  }
+}
+
 // El indicador de espera y los avisos quedan siempre debajo del último mensaje.
 function placeInConversation(bubble) {
   conversation.insertBefore(bubble, document.getElementById("typing"));
+  scrollToEnd(false);
 }
 
 function appendMessage(author, text) {
   const bubble = createBubble(author, text);
   placeInConversation(bubble);
+  if (author === "user") {
+    scrollToEnd(true);
+  }
   return bubble;
 }
 
@@ -474,6 +498,8 @@ function render() {
     notices.append(notice);
   }
   newConversationButton.hidden = !state.closed;
+  // El borrador, el indicador y los avisos cambian la altura visible: se mantiene el final a la vista.
+  scrollToEnd(state.notice !== null);
 }
 
 // Conversación nueva: vacía el log, olvida la anterior y vuelve al saludo (RN-008-14).

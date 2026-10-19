@@ -2,13 +2,22 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <title>Banco Andino — Asistente de disputas</title>
+  <link rel="preload" href="/static/fonts/newsreader-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <main class="chat">
-    <h1>Banco Andino — Asistente de disputas</h1>
+    <header class="chat-header">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <rect width="32" height="32" rx="9" fill="currentColor"/>
+        <path class="ridge" d="M6 24 13 12l4.5 7L21 14.5 26 24"/>
+        <circle class="sun" cx="23" cy="9" r="2"/>
+      </svg>
+      <h1>Banco Andino — Asistente de disputas</h1>
+    </header>
 
     <div class="panel">
       <div id="conversation" class="conversation" role="log" aria-live="polite">
@@ -19,15 +28,18 @@
     </div>
 
     <div id="actions" class="actions">
-      <button id="retry" type="button" hidden>Reintentar</button>
-      <button id="new-conversation" type="button" hidden>Iniciar una conversación nueva</button>
+      <button id="retry" type="button" class="btn btn-secondary" hidden>Reintentar</button>
+      <button id="new-conversation" type="button" class="btn btn-secondary" hidden>Iniciar una conversación nueva</button>
     </div>
 
     <form id="composer" class="composer">
-      <label for="message">Escribe tu mensaje</label>
-      <textarea id="message" name="message" rows="3" maxlength="2000"></textarea>
+      <label for="message" class="visually-hidden">Escribe tu mensaje</label>
+      <textarea id="message" name="message" rows="2" maxlength="2000" enterkeyhint="send" autocomplete="off"></textarea>
+      <button id="send" type="submit" class="btn btn-primary btn-send">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg>
+        <span class="visually-hidden">Enviar</span>
+      </button>
       <p id="counter" class="counter" hidden></p>
-      <button id="send" type="submit">Enviar</button>
     </form>
   </main>
   <script src="/static/chat.js"></script>

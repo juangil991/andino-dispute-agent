@@ -8,6 +8,7 @@ Convenciones concretas que complementan `docs/constitution.md`. Se cargan autom�
 |---|---|---|
 | `mcp-tools.md` | Servidor MCP (`core_banking_mcp`) y contratos | Nombres, esquemas, errores, seguridad, auditoría de herramientas |
 | `mcp-client.md` | Adaptador MCP del agente (`dispute_agent`) | Validación de respuestas, identidad, reintentos, auditoría |
+| `agent-behavior.md` | Agente (`dispute_agent`: application, domain, adaptador LLM) | Ciclo agéntico, guardas, ambigüedad, multi-asunto, escalamiento y handoff |
 | `mcp-testing.md` | `tests/contract`, `tests/e2e`, `tests/integration` | Cobertura por herramienta, nombrado y comentarios de trazabilidad |
 
 Las fronteras entre capas y aplicaciones (Art. 4, Art. 6, §3.2) las impone el hook `.claude/hooks/check_mcp_boundaries.py`, no una rule. La auditoría de trazabilidad antes del PR (§4.3) la impone `.claude/hooks/ac_coverage_gate.py`: sin veredicto `Cumple` vigente de `verify-ac-coverage` no se ofrece ni se crea el PR. La skill opera en dos fases: la primera auditoría es completa; si da `No cumple`, la siguiente solo verifica que se corrigieron los hallazgos `H-NN` del primer informe.

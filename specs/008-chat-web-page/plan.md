@@ -93,6 +93,8 @@ No aplica: las pruebas de navegador usan respuestas guionizadas de `POST /api/ch
 
 Ninguna dependencia nueva de producción.
 
+**Recursos estáticos de diseño (sin cambio de comportamiento).** `static/fonts/` aloja tres archivos `woff2` autoalojados, con licencia SIL OFL 1.1 (fuente: paquetes `@fontsource-variable`): `newsreader-latin-wght-normal.woff2` y `newsreader-latin-wght-italic.woff2` (voz del agente y título) e `public-sans-latin-wght-normal.woff2` (interfaz). Se sirven con el montaje existente de `StaticFiles`; no hay CDN ni petición a terceros, y cada `@font-face` usa `font-display: swap` con fuentes del sistema como respaldo. No cambian el DOM, los textos ni `chat.js`.
+
 ## 6. Estrategia de pruebas
 
 **Ubicación:**
