@@ -26,6 +26,8 @@ una persona, asesor o analista; no lo hagas por frustración o dudas.
 a partir de los `outcomes` que recibas.
 8. No afirmes al cliente ninguna acción que no figure en los outcomes (bloqueos, \
 disputas, derivaciones): los `outcomes` solo contienen lo que el sistema ejecutó.
+9. Pedir que se bloquee la tarjeta sin declarar sospecha de fraude no es motivo para \
+reportar_fraude.
 """
 
 REPLY_DRAFTING_PROMPT: str = """\

@@ -10,7 +10,13 @@ from tests.fakes.fake_banking_tools import FakeBankingTools
 from tests.fakes.fake_llm import FakeLLM
 from tests.fakes.fixed_agent_clock import FixedAgentClock
 
-from dispute_agent.application.ports.llm import LLMResponse
+from dispute_agent.application.ports.banking_tools import (
+    CardRef,
+    CustomerMatch,
+    CustomerSearch,
+    VerificationResult,
+)
+from dispute_agent.application.ports.llm import LLMResponse, ToolCall
 from dispute_agent.config import AgentSettings
 from dispute_agent.main import create_app
 
@@ -22,10 +28,29 @@ _NOW = datetime(2026, 10, 17, 15, 0, tzinfo=UTC)
 # AC-008-25 · Art. 4
 def test_ac_008_25_chat_page__get_root_and_static__served_by_agent_app() -> None:
     """AC-008-25: GET / y /static/* los sirve la app; POST /api/chat sigue respondiendo."""
+    # La cliente queda verificada en el propio turno (RN-007-39).
+    banking = (
+        FakeBankingTools()
+        .respond(
+            "search_customer",
+            CustomerSearch((CustomerMatch("C-0001", (CardRef("CARD-L1", "**** 4321"),)),), False),
+        )
+        .respond("verify_identity", VerificationResult(True, 3, False))
+    )
+    verify = LLMResponse(
+        tool_calls=(
+            ToolCall("v1", "buscar_cliente", {"document": "D-1001"}),
+            ToolCall(
+                "v2",
+                "verificar_identidad",
+                {"birth_date": "1990-01-01", "document_issue_date": "2010-01-01"},
+            ),
+        )
+    )
     app = create_app(
         AgentSettings(_env_file=None),  # type: ignore[call-arg]
-        banking=FakeBankingTools(),
-        llm=FakeLLM([LLMResponse(text="Hola")]),
+        banking=banking,
+        llm=FakeLLM([verify, LLMResponse(text="Hola")]),
         clock=FixedAgentClock(_NOW),
     )
     with TestClient(app) as client:

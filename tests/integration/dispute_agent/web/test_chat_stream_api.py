@@ -10,12 +10,18 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from tests.fakes.fake_banking_tools import FakeBankingTools
-from tests.fakes.fake_llm import FakeLLM, StreamScript, end_turn_response
+from tests.fakes.fake_llm import FakeLLM, StreamScript, end_turn_response, tool_use_response
 from tests.fakes.fixed_agent_clock import FixedAgentClock
 from tests.fakes.virtual_sleeper import VirtualSleeper
 
-from dispute_agent.application.ports.banking_tools import EscalationRegistered
-from dispute_agent.application.ports.llm import LLMStreamEnd
+from dispute_agent.application.ports.banking_tools import (
+    CardRef,
+    CustomerMatch,
+    CustomerSearch,
+    EscalationRegistered,
+    VerificationResult,
+)
+from dispute_agent.application.ports.llm import LLMError, LLMResponse, LLMStreamEnd, ToolCall
 from dispute_agent.config import AgentSettings
 from dispute_agent.domain import messages
 from dispute_agent.domain.models.outcome import OutcomeKind
@@ -53,8 +59,34 @@ def _parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
     return events
 
 
-def _llm(sleeper: VirtualSleeper, stream: list[StreamScript]) -> FakeLLM:
-    return FakeLLM([end_turn_response("decisión interna")], stream_script=stream, sleeper=sleeper)
+def _llm(sleeper: VirtualSleeper, stream: list[StreamScript], verify: bool = False) -> FakeLLM:
+    script: list[LLMResponse | LLMError] = [end_turn_response("decisión interna")]
+    if verify:
+        script.insert(0, _verify_in_turn())
+    return FakeLLM(script, stream_script=stream, sleeper=sleeper)
+
+
+def _verify_in_turn() -> LLMResponse:
+    """Guion que deja verificada a la cliente en el propio turno (RN-007-39)."""
+    return tool_use_response(
+        ToolCall("v1", "buscar_cliente", {"document": "D-1001"}),
+        ToolCall(
+            "v2",
+            "verificar_identidad",
+            {"birth_date": "1990-01-01", "document_issue_date": "2010-01-01"},
+        ),
+    )
+
+
+def _verified_banking() -> FakeBankingTools:
+    return (
+        FakeBankingTools()
+        .respond(
+            "search_customer",
+            CustomerSearch((CustomerMatch("C-0001", (CardRef("CARD-L1", "**** 4321"),)),), False),
+        )
+        .respond("verify_identity", VerificationResult(True, 3, False))
+    )
 
 
 # Regla: RN-009-01 — `POST /api/chat/stream` responde `200` con un flujo de eventos
@@ -66,8 +98,9 @@ def test_chat_stream__valid_input__emits_start_word_and_end_events() -> None:
     llm = _llm(
         sleeper,
         [([(0.1, "Hola "), (0.1, "señora "), (0.1, "Pérez.")], LLMStreamEnd("end_turn"))],
+        verify=True,
     )
-    with _client(llm, sleeper) as client:
+    with _client(llm, sleeper, _verified_banking()) as client:
         response = client.post("/api/chat/stream", json={"message": "hola"})
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -94,8 +127,8 @@ def test_chat_stream__valid_input__emits_start_word_and_end_events() -> None:
 def test_chat_stream__draft_cut__emits_interrupted_event() -> None:
     """AC-009-09: el evento final es `interrupted` si la redacción se corta."""
     sleeper = VirtualSleeper()
-    llm = _llm(sleeper, [([(0.1, "Hola ")], LLMStreamEnd("max_tokens"))])
-    banking = FakeBankingTools().respond(
+    llm = _llm(sleeper, [([(0.1, "Hola ")], LLMStreamEnd("max_tokens"))], verify=True)
+    banking = _verified_banking().respond(
         "escalate",
         EscalationRegistered(
             escalation_id="E-0001", status="PENDING", escalated_at=_NOW, reason="OTHER"
@@ -142,8 +175,8 @@ def test_chat_stream__invalid_input__fails_before_streaming(
 def test_chat_endpoint__unchanged_by_stream_endpoint__keeps_json_contract() -> None:
     """AC-007-31: `POST /api/chat` conserva su contrato JSON."""
     sleeper = VirtualSleeper()
-    llm = _llm(sleeper, [])
-    with _client(llm, sleeper) as client:
+    llm = _llm(sleeper, [], verify=True)
+    with _client(llm, sleeper, _verified_banking()) as client:
         response = client.post("/api/chat", json={"message": "hola"})
     assert response.status_code == 200
     body = response.json()

@@ -48,6 +48,27 @@ def _registered() -> EscalationRegistered:
     )
 
 
+def _verify_in_turn() -> LLMResponse:
+    """Guion que deja verificada a la cliente en el propio turno (RN-007-39)."""
+    return _tools(
+        _call("v1", "buscar_cliente", document="D-1001"),
+        _call(
+            "v2", "verificar_identidad", birth_date="1990-01-01", document_issue_date="2010-01-01"
+        ),
+    )
+
+
+def _verified_banking() -> FakeBankingTools:
+    return (
+        FakeBankingTools()
+        .respond(
+            "search_customer",
+            CustomerSearch((CustomerMatch("C-0001", (CardRef("CARD-L1", "**** 4321"),)),), False),
+        )
+        .respond("verify_identity", VerificationResult(True, 3, False))
+    )
+
+
 def _client(llm: FakeLLM, banking: FakeBankingTools | None = None) -> TestClient:
     app = create_app(
         _settings(),
@@ -66,8 +87,14 @@ def _client(llm: FakeLLM, banking: FakeBankingTools | None = None) -> TestClient
 # AC-007-31 · Art. 5
 def test_ac_007_31_chat_api__invalid_requests__rejected_without_calling_llm() -> None:
     """AC-007-31: las 6 filas del contrato de POST /api/chat."""
-    llm = FakeLLM([LLMResponse(text="Hola, ¿en qué te ayudo?"), LLMResponse(text="Sigo aquí.")])
-    with _client(llm) as client:
+    llm = FakeLLM(
+        [
+            _verify_in_turn(),
+            LLMResponse(text="Hola, ¿en qué te ayudo?"),
+            LLMResponse(text="Sigo aquí."),
+        ]
+    )
+    with _client(llm, _verified_banking()) as client:
         # Fila 1: sin conversation_id -> conversación nueva.
         first = client.post("/api/chat", json={"message": "hola"})
         assert first.status_code == 200
@@ -83,8 +110,9 @@ def test_ac_007_31_chat_api__invalid_requests__rejected_without_calling_llm() ->
         )
         assert second.status_code == 200
         assert second.json()["conversation_id"] == body["conversation_id"]
-        assert len(llm.requests) == 2
-        sent = [(m.role, m.text) for m in llm.requests[1].messages]
+        # Primer turno: 2 llamadas al LLM (verificación y respuesta); segundo turno: 1.
+        assert len(llm.requests) == 3
+        sent = [(m.role, m.text) for m in llm.requests[2].messages]
         assert ("user", "hola") in sent
         assert ("assistant", "Hola, ¿en qué te ayudo?") in sent
 
@@ -243,8 +271,10 @@ def test_ac_007_26_chat_api__closed_conversation__escalated_status() -> None:
 
 # Soporte de tests: el filtro de PAN (RN-007-26) llega a `reply` por el endpoint · Art. 3
 def test_chat_api__pan_in_llm_reply__is_redacted() -> None:
-    llm = FakeLLM([LLMResponse(text="Tu tarjeta 4111111111114321 fue revisada.")])
-    with _client(llm) as client:
+    llm = FakeLLM(
+        [_verify_in_turn(), LLMResponse(text="Tu tarjeta 4111111111114321 fue revisada.")]
+    )
+    with _client(llm, _verified_banking()) as client:
         response = client.post("/api/chat", json={"message": "hola"})
     assert "4111111111114321" not in response.json()["reply"]
     assert "[REDACTED]" in response.json()["reply"]

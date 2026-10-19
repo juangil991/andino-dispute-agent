@@ -3,9 +3,9 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Spec | [spec.md](./spec.md) — versión 0.2.0 (T-007-01…29 implementaron la 0.1.x; T-007-30…36 implementan la 0.2.0, issue #41) |
-| Plan | [plan.md](./plan.md) — versión 0.2.0 (§1.1 para T-007-30…36) |
-| Fecha | 2026-10-18 |
+| Spec | [spec.md](./spec.md) — versión 0.3.2 (T-007-01…29 implementaron la 0.1.x; T-007-30…37, la 0.2.0, issue #41; T-007-38…48, la 0.3.x, issue #45) |
+| Plan | [plan.md](./plan.md) — versión 0.3.0 (§1.1 para T-007-30…37; §1.2 para T-007-38…47) |
+| Fecha | 2026-10-19 |
 
 **Estados:** `[ ]` pendiente · `[~]` en curso · `[x]` terminada
 
@@ -27,7 +27,7 @@ Rutas relativas a la raíz del repositorio. Notas para quien implemente:
 4. Un test de soporte puro no lleva el prefijo y declara `# Soporte de tests: <qué> · Art. 3`.
 5. Los tests de `tests/contract/` y `tests/integration/` se nombran `test_ac_007_NN_<componente>__<condición>__<resultado>`. Los parametrizados llevan `ids=` legibles.
 6. Las aserciones reproducen el **Then** completo del AC, incluidas las líneas `And`.
-7. Antes de citar una RN, comprobar el `Cubre:` del AC en `spec.md`. La spec llega a RN-007-36, a DP-007-07 y a AC-007-43.
+7. Antes de citar una RN, comprobar el `Cubre:` del AC en `spec.md`. La spec llega a RN-007-43, a DP-007-07 y a AC-007-57.
 
 ---
 
@@ -799,6 +799,217 @@ La auditoría de la spec 0.2.0 dio **No cumple** (1 Bloqueante, 1 Mayor, 0 Menor
 - **Green:** los cambios de arriba; `uv run pytest -q`, `ruff check .`, `ruff format --check .` y `mypy --strict src` en verde.
 - **Refactor:** —
 
+## Tareas de la versión 0.3.0 (issue #45: atención antes de verificar la identidad)
+
+Implementan la spec 0.3.0 según el plan 0.3.0, §1.2. Solo tocan `dispute_agent` y sus tests; la spec 009 0.2.0 ya está alineada (solo cambia el test de AC-009-14, en T-007-41). Reglas comunes:
+
+- Al terminar cada tarea, la suite completa debe seguir en verde. Por eso T-007-39 adapta primero los tests existentes que no tratan de la identificación (pasan antes y después del cambio) y T-007-41 adapta el e2e de AC-009-14, que sí cambia de expectativa.
+- `create_app` crea su propio repositorio de conversaciones: los tests de API no pueden precargar una conversación verificada. Para dejar verificada a la cliente en esos tests, el guion del `FakeLLM` pide `buscar_cliente` y `verificar_identidad` en el propio turno, con `FakeBankingTools` programado (RN-007-39). No se modifica `create_app`.
+- Una tarea cuyo test ya pasa en Red porque el comportamiento coincide lo anota y comprueba su sensibilidad (precedente: T-007-33).
+- Los textos fijos de §7.4 se comparan con el literal de la spec, nunca con la constante que se prueba.
+
+### [x] T-007-38 — Dominio: textos fijos, selector y rastro del turno
+
+- **Cubre:** soporte de T-007-41…43 (AC-007-44 a 49, 53, 54); RN-007-38, RN-007-41.
+- **App / capa:** `dispute_agent` / `domain`
+- **Depende de:** —
+- **Archivos:** `src/dispute_agent/domain/identification.py`, `src/dispute_agent/domain/messages.py`, `src/dispute_agent/domain/models/conversation.py`, `tests/unit/dispute_agent/domain/test_identification.py`, `tests/unit/dispute_agent/domain/test_conversation.py`
+- **Aclaraciones de diseño (vinculantes, plan §1.2):**
+  - `IdentificationStep` (`Enum`: `LOCATED`, `MORE_DATA_NEEDED`, `NOT_FOUND`, `WRONG_DATES`, `INVALID_DATES`) e `IdentificationReply` (`Enum` con los 10 textos de spec §7.4: `REMINDER_LOCATE`, `REMINDER_VERIFY`, `ASK_DATES`, `ASK_MORE_DATA`, `NOT_FOUND`, `WRONG_DATES_2`, `WRONG_DATES_1`, `INVALID_DATES`, `CLOSED_ESCALATED`, `CLOSED_ESCALATION_FAILED`) en `domain/identification.py`. Stdlib pura.
+  - `select_identification_reply(conv, last_outcome_kind: OutcomeKind | None) -> IdentificationReply` con el orden de RN-007-38: (1) conversación `ESCALATED` ⇒ `CLOSED_ESCALATION_FAILED` si `last_outcome_kind is ESCALATION_FAILED`, si no `CLOSED_ESCALATED`; (2) `conv.turn_identification` ⇒ su texto, y `WRONG_DATES` con `turn_attempts_remaining == 2` ⇒ `WRONG_DATES_2` y con `1` ⇒ `WRONG_DATES_1`; (3) sin rastro ⇒ `REMINDER_VERIFY` si `located_customer_id` no es `None`, si no `REMINDER_LOCATE`.
+  - `IDENTIFICATION_REPLIES: dict[IdentificationReply, str]` en `domain/messages.py`, con el texto literal de §7.4. Los cierres reutilizan `ESCALATED_NO_TX_REASON`, `ESCALATED_NO_TX_NEXT_STEPS` y los textos de `ESCALATION_FAILED` ya definidos (`f"{reason} {next_steps}"`).
+  - `Conversation` gana `turn_identification: IdentificationStep | None = None`, `turn_attempts_remaining: int | None = None` y `turn_blocked_tools: list[str]` (con `default_factory`), al final. Métodos: `begin_turn()` (los pone a cero) y `record_identification(step, attempts_remaining=None)`.
+- **Test primero:** `tests/unit/dispute_agent/domain/test_identification.py::test_select_identification_reply__order_of_rn_007_38`
+- **Red:** falla con `ImportError`. Tests de soporte (`# Soporte de tests: textos fijos y selector de RN-007-38 · Art. 7`), con `ids=` legibles:
+  - el orden (1), (2), (3) de RN-007-38, incluida la prioridad del cierre sobre el rastro y `WRONG_DATES` con 2 y con 1 intento;
+  - cada texto de `IDENTIFICATION_REPLIES` es igual al literal de spec §7.4, no menciona cuál fecha falló y no contiene datos de las semillas (`C-0001`, `Laura Méndez`, `D-1001`, `****`);
+  - `Conversation.begin_turn()` pone a cero el rastro y `record_identification` conserva solo el último; el rastro no altera `failed_searches`, `verified_customer_id` ni `status` (RN-007-41).
+- **Green:** módulo, textos y campos nuevos.
+- **Refactor:** —
+
+### [x] T-007-39 — Regresión: los tests ajenos a la identificación usan una cliente verificada
+
+- **Cubre:** soporte de T-007-41 (plan §6, "Regresión 0.3.0"); RN-007-39.
+- **App / capa:** `dispute_agent` / tests
+- **Depende de:** —
+- **Archivos:** `tests/unit/dispute_agent/application/test_handle_customer_message.py`, `tests/integration/dispute_agent/web/test_chat_api.py`, `tests/integration/dispute_agent/web/test_chat_stream_api.py`, `tests/integration/dispute_agent/web/test_chat_page_serving.py`
+- **Cambios (sin cambiar lo que cada test verifica):**
+  - `test_handle_customer_message.py`: `test_handle_message__no_conversation_id__creates_new_conversation` y `test_handle_message__second_turn__sends_saved_history_to_llm`. La conversación empieza verificada: con `ConversationBuilder().verified(...)` si el test llega por el caso de uso con un repositorio propio; si el test exige crear la conversación nueva, el guion verifica a la cliente en ese turno.
+  - `test_chat_api.py`: `test_ac_007_31_chat_api__invalid_requests__rejected_without_calling_llm` y `test_chat_api__pan_in_llm_reply__is_redacted`.
+  - `test_chat_stream_api.py`: `test_chat_stream__valid_input__emits_start_word_and_end_events`, `test_chat_stream__draft_cut__emits_interrupted_event` y `test_chat_endpoint__unchanged_by_stream_endpoint__keeps_json_contract`.
+  - `test_chat_page_serving.py`: `test_ac_008_25_chat_page__get_root_and_static__served_by_agent_app`.
+  - En los tests de API, el guion verifica a la cliente en el mismo turno (ver nota común). La verificación añade llamadas al `FakeLLM` y a `FakeBankingTools`: ajustar solo los conteos que dependan de ellas.
+  - No se tocan `src/` ni los tests de AC-007-21 y de `not_listed` (T-007-40 y T-007-42).
+- **Test primero:** los 8 tests adaptados (`uv run pytest` sobre los cuatro archivos).
+- **Red:** — (los tests adaptados pasan antes y después del cambio de T-007-41; se anota). Se comprueba su sensibilidad: con la conversación sin verificar fallarían tras T-007-41.
+- **Green:** los cambios de arriba; `uv run pytest -q` en verde.
+- **Refactor:** extraer a una función de ayuda el guion que verifica a la cliente en los tests de API, si se repite.
+
+### [x] T-007-40 — Guarda: `evaluar_disputa` sin verificar se bloquea y se anota
+
+- **Cubre:** AC-007-50 (fila 2); RN-007-01, RN-007-37.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-38, T-007-39
+- **Archivos:** `src/dispute_agent/application/use_cases/handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_guard.py`, `tests/unit/dispute_agent/application/test_handle_customer_message.py`
+- **Aclaraciones de diseño (vinculantes):**
+  - `_blocked` añade `call.name` a `conv.turn_blocked_tools` (todas las vías de bloqueo pasan por ahí).
+  - `_evaluate_dispute` sin `verified_customer_id` ya no devuelve `transaction_not_listed`: devuelve `self._blocked(conv, call, "RN-007-01", "Primero debe verificarse la identidad del cliente con verificar_identidad.")`. Con la cliente verificada, `transaction_not_listed` y `already_evaluated` no cambian.
+  - `begin_turn()` se invoca desde `decide_turn`, antes de cargar el mensaje en el historial (T-007-41 usa el rastro; aquí solo se necesita para que `turn_blocked_tools` no acumule entre turnos).
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_identification_guard.py::test_ac_007_50_handle_message__evaluate_before_verify__blocked_by_guard`
+- **Red:** falla porque hoy `evaluar_disputa` sin verificar se responde como `transaction_not_listed` sin evento `tool_blocked`. Tests:
+  - `test_ac_007_50_…` (fila 2 de AC-007-50): en una misma respuesta, `evaluar_disputa` sobre `TX-L1` y después `verificar_identidad`: `tool_blocked` con `RN-007-01` para `evaluar_disputa`, `conv.decisions` vacío, sin `open_dispute`, la cliente queda verificada y el `reply` es el texto del guion.
+  - `test_handle_message__blocked_tools__recorded_per_turn` (soporte, Art. 7): `conv.turn_blocked_tools` contiene los nombres bloqueados del turno y vuelve a `[]` en el turno siguiente.
+  - Se adapta `test_handle_message__evaluate_unlisted_transaction__not_listed[unverified_seen]` en `test_handle_customer_message.py`: ahora espera el resultado de herramienta con error `blocked` y el evento `tool_blocked` con `RN-007-01`; el caso `[verified_unseen]` no cambia.
+- **Green:** los dos cambios de arriba.
+- **Refactor:** —
+
+### [x] T-007-41 — Turno sin verificar: texto fijo, recordatorio y auditoría `identification_required`
+
+- **Cubre:** AC-007-44, AC-007-45, AC-007-53, AC-007-54, AC-007-56 y el cierre de AC-007-57 por e2e; RN-007-37, RN-007-38, RN-007-39, RN-007-21, RN-007-24, RN-007-28, RN-007-42; actualiza el e2e de AC-009-14 (spec 009 0.2.0).
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-38, T-007-40
+- **Archivos:** `src/dispute_agent/application/use_cases/handle_customer_message.py`, `src/dispute_agent/application/ports/audit_log.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_audit.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_audit.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_escalations.py`, `tests/e2e/test_chat_stream_e2e.py`
+- **Aclaraciones de diseño (vinculantes, plan §1.2):**
+  - `AuditEventType` gana `"identification_required"`.
+  - `decide_turn` llama a `conv.begin_turn()` antes del ciclo (ya está desde T-007-40). Tras un ciclo normal (`drafted = True`), si `conv.verified_customer_id is None`: `text = IDENTIFICATION_REPLIES[select_identification_reply(conv, <kind del último outcome>)]`, `drafted = False`. Si la cliente está verificada no se toca nada (RN-007-39). El ciclo no cambia: el LLM se sigue llamando hasta `end_turn` y su texto se descarta.
+  - Si el texto elegido es `REMINDER_LOCATE` o `REMINDER_VERIFY`, se emite `_audit(conv, "identification_required", tool=None, input={"requested_tools": list(conv.turn_blocked_tools)}, output={"reply": "REMINDER_LOCATE" | "REMINDER_VERIFY"}, rule="RN-007-37", reason="solicitud rechazada por falta de identificación")`. Nunca se registran el texto de la cliente, el del LLM ni los argumentos. No se emite en turnos con cierre ni en conversaciones ya cerradas.
+  - Las derivaciones de `fail_turn` (`ITERATION_LIMIT`, `LLM_FAILURE`) devuelven su texto fijo y no pasan por el selector.
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_identification.py::test_ac_007_44_handle_message__other_topic_unverified__fixed_reminder`
+- **Red:** falla porque el `reply` es el texto del guion. Tests:
+  - `test_ac_007_44_…`: las 6 filas con conversación nueva (spec §6): `reply == REMINDER_LOCATE` literal y sin `Claro, ya reviso eso por ti.`; sin llamadas en `FakeBankingTools`; `conv.decisions` vacío; `outcomes == ()`; `ACTIVE`; `failed_searches == 0`; sin `verify_identity`.
+  - `test_ac_007_45_handle_message__located_unverified__fixed_verify_reminder`: conversación localizada (`ConversationBuilder().located(...)`) y `consultar_transacciones`: sin `list_transactions`, `reply == REMINDER_VERIFY`, 0 intentos fallidos.
+  - `test_ac_007_53_handle_message__unidentified_human_or_fraud__fixed_closing_reply`: las 2 filas (`solicitar_atencion_humana`, `reportar_fraude`): `escalate` limitado con `OTHER` / `FRAUD_SUSPECTED`, sin `block_card`, `reply` = cierre `ESCALATED` literal, sin el texto del guion, `ESCALATED`.
+  - `test_ac_007_54_handle_message__failure_during_identification__fixed_closing_reply`: las 4 filas (`buscar_cliente` con `INTERNAL`; `verificar_identidad` con `INTERNAL`, `BankingToolUnavailableError` por tiempo límite y por esquema): sin `located_customer_id` ni `verified_customer_id`; `escalate` `UNRECOVERABLE_SYSTEM_FAILURE` limitado; `reply` = cierre `ESCALATED` sin el código ni la excepción; `ESCALATED`.
+  - `test_handle_message__escalation_failed_during_identification__fixed_failed_closing_reply` (soporte, RN-007-38 (1)): `escalate` con `INTERNAL` en una persona sin identificar ⇒ `reply` = cierre `ESCALATION_FAILED`.
+  - `test_handle_message__verified_in_turn__reply_is_llm_text` (soporte, RN-007-39): la cliente se verifica en el turno ⇒ el `reply` es el texto del guion.
+  - `test_ac_007_56_handle_message__rejection__audited_without_text` (en `..._identification_audit.py`): las 3 filas con `FakeAgentAuditLog` y `FixedAgentClock`: exactamente 1 evento `identification_required` con `conversation_id`, `at`, `rule == "RN-007-37"`, el motivo, `input.requested_tools` y `output.reply == "REMINDER_LOCATE"`; un `tool_blocked` por herramienta listada; ningún evento contiene el texto del mensaje ni el del guion, `4111111111114321` ni `D-1001`; los turnos de `ASK_DATES`, `ASK_MORE_DATA`, `NOT_FOUND`, `WRONG_DATES`, `INVALID_DATES` y los cierres no emiten el evento.
+  - Se adapta el e2e de AC-009-14 en `tests/e2e/test_chat_stream_e2e.py::test_chat_stream__unverified_customer__has_no_account_data`: con el MCP real, el flujo es `start` y `end` con `REMINDER_LOCATE`, sin `word` y sin llamada de redacción (`len(llm.stream_requests) == 0`), sin datos de las semillas.
+  - Regresión: si `test_ac_007_30_handle_message__every_case_audited` o `test_ac_007_26_handle_message__closed_conversation__no_calls` fallan por el evento nuevo, se corrigen sin debilitar lo que verifican (el evento sale completo, con `input`, `output`, `rule` y `reason`).
+- **Green:** tipo de evento, sustitución en `decide_turn` y emisión del evento.
+- **Refactor:** extraer la sustitución a un método privado (`_identification_reply`) si `decide_turn` crece.
+
+### [x] T-007-42 — Localización: `ASK_DATES`, `ASK_MORE_DATA` y `NOT_FOUND`
+
+- **Nota (T-007-41):** al terminar T-007-41 quedó en rojo `test_ac_007_21_handle_message__multiple_matches__asks_more_data` (previsto: depende del rastro que registra esta tarea). Esta tarea lo adapta y deja la suite en verde. Además añade, en `test_handle_customer_message_identification_audit.py`, la comprobación pendiente de AC-007-56: los turnos de `ASK_DATES`, `ASK_MORE_DATA` y `NOT_FOUND` no emiten `identification_required` (T-007-43 añade los de `WRONG_DATES` e `INVALID_DATES`). Se añade ese archivo a los de la tarea.
+
+- **Cubre:** AC-007-21, AC-007-46, AC-007-48, AC-007-51; RN-007-02, RN-007-05, RN-007-37, RN-007-38, RN-007-41.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-41
+- **Archivos:** `src/dispute_agent/application/use_cases/handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_locate.py`, `tests/unit/dispute_agent/application/test_handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_audit.py`
+- **Aclaraciones de diseño (vinculantes):** `_search_customer` llama a `conv.record_identification(...)` con `LOCATED` (una coincidencia y sin refinamiento), `MORE_DATA_NEEDED` (varias coincidencias o `refinement_required`) o `NOT_FOUND` (cero y sin refinamiento). `record_search` y el límite de 2 búsquedas sin coincidencias no cambian.
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_identification_locate.py::test_ac_007_46_handle_message__located_customer__asks_for_dates`
+- **Red:** falla porque el `reply` sigue siendo el recordatorio `REMINDER_LOCATE` (no hay rastro). Tests:
+  - `test_ac_007_46_…`: las 3 filas (documento, nombre, `card_last4`) con una coincidencia: `reply == ASK_DATES`, sin `C-0001`, `Laura Méndez`, `****01`, `**** 4321` ni `CARD-L1` en `reply` ni `outcomes`, sin `verify_identity`.
+  - `test_ac_007_48_handle_message__no_match__not_found_then_escalates`: 0 búsquedas previas ⇒ `NOT_FOUND`, `ACTIVE`; 1 búsqueda previa ⇒ `escalate` `INSUFFICIENT_OR_CONTRADICTORY_INFO` limitado, `reply` = cierre `ESCALATED`, `ESCALATED`; y la secuencia `0 → varias → 0` queda `ACTIVE`.
+  - `test_ac_007_51_handle_message__locate_and_dispute_in_one_message__only_identification`: `buscar_cliente(D-1001)` y `evaluar_disputa(TX-L1)` en una respuesta: se localiza a `C-0001`, `evaluar_disputa` se bloquea por `RN-007-01`, `conv.decisions` vacío, sin `open_dispute`, `reply == ASK_DATES`, `outcomes == ()`.
+  - Se adapta `test_ac_007_21_handle_message__multiple_matches__asks_more_data` en `test_handle_customer_message.py`: espera `reply == ASK_MORE_DATA` literal y sin `C-0001`, `C-0003`, `Laura Méndez`, `****01`, `****03`, `**** 4321` ni `**** 5555` (el guion del LLM los incluye a propósito); sigue sin `verify_identity`, sin derivar y sin contar como búsqueda sin coincidencias.
+- **Green:** los tres `record_identification` en `_search_customer`.
+- **Refactor:** —
+
+### [x] T-007-43 — Verificación: `WRONG_DATES`, `INVALID_DATES` y verificación en el mismo mensaje
+
+- **Cubre:** AC-007-47, AC-007-49, AC-007-50 (fila 1), AC-007-52; RN-007-03, RN-007-04, RN-007-21, RN-007-37, RN-007-38, RN-007-39, RN-007-40, RN-007-41.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-42
+- **Archivos:** `src/dispute_agent/application/use_cases/handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_verify.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_audit.py` (añade la comprobación de AC-007-56 para `WRONG_DATES` e `INVALID_DATES`)
+- **Aclaraciones de diseño (vinculantes):**
+  - `_verify_identity` llama a `conv.record_identification(WRONG_DATES, result.attempts_remaining)` cuando `verified = false`.
+  - Las fechas que no tienen formato ISO (`date.fromisoformat` falla) registran `INVALID_DATES`, devuelven `_error(call_id, "invalid_date", …)` (se mantiene el código existente que exige `test_handle_message__verify_without_preconditions__error_without_core_call`) y **no** llegan al servidor ni cuentan intento.
+  - Un `BankingToolError` con `code == "INVALID_INPUT"` de `verify_identity` registra `INVALID_DATES` y devuelve el mismo error al LLM, sin derivar (RN-007-40). Cualquier otro `BankingToolError` o `BankingToolUnavailableError` sigue yendo a `_read_failure` (RN-007-21).
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_identification_verify.py::test_ac_007_47_handle_message__wrong_dates__fixed_attempts_reply`
+- **Red:** falla porque el `reply` es el recordatorio `REMINDER_VERIFY` (no hay rastro de `WRONG_DATES`) y `INVALID_INPUT` deriva por `_read_failure`. Tests:
+  - `test_ac_007_47_…`: las 3 filas con 0, 1 y 2 fallos previos (`FakeBankingTools` devuelve `attempts_remaining` 2, 1 y 0 con `escalation_required`): `WRONG_DATES_2`, `WRONG_DATES_1` y, en la 3.ª, `escalate` `IDENTITY_VERIFICATION_FAILED` limitado, `reply` = cierre `ESCALATED`, `ESCALATED`. Ningún `reply` dice cuál fecha falló ni contiene `1990-03-15` ni `2008-04-20`.
+  - `test_ac_007_49_handle_message__invalid_dates__ask_again_without_attempt`: las 2 filas (`15/03/1990` sin llamada a `verify_identity`; `1990-03-15` y `1990-03-14` con `verify_identity` lanzando `BankingToolError("INVALID_INPUT")` y 1 llamada): `reply == INVALID_DATES`, sin `escalate`, `ACTIVE`, y un 3.er mensaje con las fechas correctas verifica a la cliente.
+  - `test_ac_007_50_handle_message__verify_then_evaluate_in_one_message__dispute_opened`: fila 1: `verificar_identidad` y, en la llamada siguiente, `evaluar_disputa(TX-L1)`: `open_dispute(TX-L1)`, `DISPUTE_OPENED` y `reply == "Gracias, ya verifiqué tu identidad."`. Puede pasar ya en Red (RN-007-37 coincide con el comportamiento 0.2.x, como AC-007-37); se anota y se comprueba su sensibilidad.
+  - `test_ac_007_52_handle_message__fraud_and_verify_in_one_message__blocks_or_escalates`: las 2 filas (fechas correctas ⇒ `block_card(CARD-L1)` y `escalate` `FRAUD_SUSPECTED` con `CARD_BLOCKED`; incorrectas ⇒ sin `block_card`, `escalate` limitado, `reply` = cierre `ESCALATED`, `ESCALATED`). La fila 1 puede pasar ya en Red; se anota.
+- **Green:** los tres cambios de `_verify_identity`.
+- **Refactor:** —
+
+### [x] T-007-44 — Prompt y descripción de `reportar_fraude`; prueba con Claude real
+
+- **Cubre:** AC-007-44 (instrucción al LLM y prueba opcional); RN-007-37.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** —
+- **Archivos:** `src/dispute_agent/application/system_prompt.py`, `src/dispute_agent/application/agent_tools.py`, `tests/unit/dispute_agent/application/test_system_prompt.py`, `tests/unit/dispute_agent/application/test_agent_tools.py`, `tests/integration/dispute_agent/llm/test_anthropic_llm_live.py`
+- **Test primero:** `tests/unit/dispute_agent/application/test_system_prompt.py::test_ac_007_44_system_prompt__block_card_without_fraud_is_not_fraud_report`
+- **Red:** `SYSTEM_PROMPT` y la descripción de `reportar_fraude` no dicen que pedir el bloqueo de la tarjeta sin declarar sospecha de fraude no es motivo para `reportar_fraude`. El test busca una frase fija acordada, `Pedir que se bloquee la tarjeta sin declarar sospecha de fraude no es motivo para reportar_fraude`, en el prompt y, en `test_agent_tools.py`, en la descripción de `reportar_fraude` (`agent-behavior.md` §17–18); falla.
+- **Green:** añadir la frase, en español, al prompt (regla nueva) y a la descripción de la herramienta.
+- **Refactor:** —
+- **Prueba opcional (`@pytest.mark.llm`, `test_anthropic_llm_live.py::test_ac_007_44_live__block_card_without_fraud__no_fraud_or_human_tool`):** sin identidad verificada, `bloquea mi tarjeta` no produce `reportar_fraude` ni `solicitar_atencion_humana`. Se excluye por defecto y no bloquea la integración (§5.3.2).
+
+### [x] T-007-45 — API y streaming: respuesta fija y la identificación no se traslada
+
+- **Cubre:** AC-007-55, AC-007-57; RN-007-38, RN-007-43, RN-009-04.
+- **App / capa:** `dispute_agent` / `infrastructure/inbound` (integración) y `application` (streaming)
+- **Depende de:** T-007-41
+- **Archivos:** `tests/unit/dispute_agent/application/test_stream_customer_message_identification.py`, `tests/integration/dispute_agent/web/test_chat_identification_api.py`
+- **Test primero:** `tests/unit/dispute_agent/application/test_stream_customer_message_identification.py::test_ac_007_57_stream__unverified_turn__start_and_end_without_words`
+- **Red:** no hay cambio de producción previsto en esta tarea: `StreamCustomerMessage` ya trata `drafted = False` como texto fijo (plan §1.2). Los tests pueden pasar ya en Red; se anota y se comprueba su sensibilidad (quitar la sustitución de T-007-41 los hace fallar). Tests:
+  - `test_ac_007_57_stream__…` (unitario): conversación nueva, `hola` y guion `end_turn`: `ReplyStarted` y `ReplyEnded` sin `ReplyWord`; `reply == REMINDER_LOCATE`; `ACTIVE`; el `FakeLLM` no recibe llamada de redacción.
+  - `test_ac_007_57_chat_stream_api__unverified_turn__start_and_end_without_words` (integración): el cuerpo SSE trae `start` y `end` sin `word`, con `reply = REMINDER_LOCATE`.
+  - `test_ac_007_55_chat_api__new_conversation__does_not_inherit_identification`: la conversación `A` queda verificada por guion (`buscar_cliente` + `verificar_identidad`); un mensaje sin `conversation_id` devuelve `B ≠ A`; `consultar_transacciones` no llega a `FakeBankingTools`; `reply == REMINDER_LOCATE`; `A` sigue verificada (su siguiente turno trae el texto del LLM).
+- **Green:** — (si algún test falla por un defecto real de `src/`, la tarea queda `BLOCKED` con el motivo: no se amplía el alcance).
+- **Refactor:** —
+
+### [x] T-007-46 — Adaptador MCP: `INVALID_INPUT` y respuesta inválida de `verificar_identidad`
+
+- **Cubre:** AC-007-49 y AC-007-54 (integración); RN-007-21, RN-007-40.
+- **App / capa:** `dispute_agent` / `infrastructure/outbound` (integración)
+- **Depende de:** —
+- **Archivos:** `tests/integration/dispute_agent/mcp/test_mcp_stdio_banking_adapter_identity.py`
+- **Test primero:** `tests/integration/dispute_agent/mcp/test_mcp_stdio_banking_adapter_identity.py::test_ac_007_49_mcp_adapter__verify_identity_invalid_input__raises_banking_tool_error`
+- **Red:** no hay cambio de producción previsto: el adaptador ya traduce los sobres de error y valida el esquema (spec 007 §7, T-007-18). Los tests pueden pasar ya en Red; se anota y se comprueba su sensibilidad. Tests con la sesión MCP en memoria contra el core con SQLite:
+  - `test_ac_007_49_…`: `verificar_identidad` con una expedición anterior al nacimiento ⇒ `BankingToolError` con `code == "INVALID_INPUT"` y `retryable = False`.
+  - `test_ac_007_54_mcp_adapter__verify_identity_without_verified__raises_unavailable`: una salida sin `verified` ⇒ `BankingToolUnavailableError`.
+- **Green:** — (si falla por un defecto real del adaptador, la tarea queda `BLOCKED` con el motivo).
+- **Refactor:** —
+
+### [x] T-007-47 — Verificación final de la versión 0.3.0
+
+- **Resultado (ejecutado por el orquestador, 2026-10-19):**
+  - `uv run pytest --cov`: **1758 passed, 5 deselected** (los `@pytest.mark.llm`). Cobertura global **97,21 %** (umbral 80 %).
+  - `coverage report --include="src/*/domain/*,src/*/application/*" --fail-under=90`: **99 %**.
+  - `ruff check .`, `ruff format --check .` (341 archivos) y `mypy --strict src` (124 archivos): sin errores.
+- **Cubre:** Definition of Done (§5.5) sobre AC-007-01…57.
+- **App / capa:** ambas / verificación
+- **Depende de:** T-007-38, T-007-39, T-007-40, T-007-41, T-007-42, T-007-43, T-007-44, T-007-45, T-007-46
+- **Archivos:** — (solo ejecución)
+- **Test primero:** `uv run pytest --cov`
+- **Red:** —
+- **Green:**
+  - `uv run pytest --cov` (global ≥ 80 %).
+  - `uv run coverage report --include="src/*/domain/*,src/*/application/*" --fail-under=90`.
+  - `uv run ruff check .`, `uv run ruff format --check .` y `uv run mypy --strict src`.
+  - Confirmar que el inventario de regresión del plan §6 es completo: ningún test de 007, 008 ni 009 falla por los cambios de 0.3.0 sin haber sido adaptado en T-007-39, T-007-40, T-007-41 o T-007-42.
+- **Refactor:** —
+
+## Tareas de corrección de la versión 0.3.x (auditoría `verify-ac-coverage`, fase 1: No cumple)
+
+La auditoría de la spec 0.3.1 dio **No cumple** (3 Bloqueantes, 7 Mayores, 0 Menores y 4 sugerencias). H-09 se corrigió en la spec 0.3.2 (RN-007-41 en el `Cubre:` de AC-007-48). Esta tarea corrige el resto: son correcciones de trazabilidad y de aserciones de tests, sin cambio de comportamiento de producción. La segunda auditoría solo verifica que H-01 a H-10 se corrigieron.
+
+### [x] T-007-48 — H-01…H-08 y H-10: trazabilidad y aserciones de los tests de la versión 0.3.x
+
+- **Cubre:** AC-007-44, 45, 47, 48, 50, 52, 54, 57 (trazabilidad y aserciones); hallazgos H-01 a H-08 y H-10.
+- **App / capa:** `dispute_agent` / tests
+- **Depende de:** T-007-47
+- **Archivos:** `tests/unit/dispute_agent/application/test_handle_customer_message_identification_guard.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_audit.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_verify.py`, `tests/unit/dispute_agent/application/test_handle_customer_message_identification_locate.py`, `tests/integration/dispute_agent/web/test_chat_identification_api.py`, `tests/unit/dispute_agent/application/test_stream_customer_message_identification.py`, `tests/integration/dispute_agent/llm/test_anthropic_llm_live.py`
+- **Cambios** (antes de citar una RN, comprobar el `Cubre:` del AC en `spec.md`; los enunciados de `Regla:` son los literales de la spec §4):
+  - **H-01:** en `test_ac_007_50_handle_message__evaluate_before_verify__blocked_by_guard` sustituir el comentario de una línea por `# Regla: RN-007-37 — <enunciado literal>` y `# AC-007-50 · Art. 7`.
+  - **H-02:** los tests `test_handle_message__verified_in_turn__does_not_emit_identification_required` y `test_handle_message__closed_conversation__does_not_emit_identification_required` llevan `# Regla: RN-007-42 — <enunciado literal>` y `# AC-007-56 · Art. 8`.
+  - **H-03:** en `test_chat_identification_api.py` y `test_stream_customer_message_identification.py` dejar solo `# Regla: RN-007-38 — <enunciado literal>`; quitar RN-009-04.
+  - **H-04:** `test_ac_007_45_…`: afirmar que `verify_identity` no se invocó, `status is ACTIVE` y 0 intentos de verificación.
+  - **H-05:** `test_ac_007_47_…` (3.er fallo): afirmar `outcomes == [ESCALATED]` y que el resumen es limitado (`card_id`, `transaction_id` y `dispute_id` en `None`).
+  - **H-06:** `test_ac_007_54_…`: en las filas de `verificar_identidad` afirmar `located_customer_id == "C-0001"` (spec 0.3.1).
+  - **H-07:** `test_ac_007_50_…verify_then_evaluate…`: afirmar `conv.verified_customer_id == "C-0001"`.
+  - **H-08:** `test_ac_007_52_…`: citar `Regla: RN-007-14` y `RN-007-17` (no RN-007-15); en la fila de fechas correctas afirmar `card_id == "CARD-L1"` en la derivación y en la de incorrectas `card_id is None` y resumen limitado.
+  - **H-09:** ya resuelto en la spec 0.3.2; el test de AC-007-48 puede citar RN-007-05 y RN-007-41.
+  - **H-10:** en `test_anthropic_llm_live.py` (`@pytest.mark.llm`, no se ejecuta) añadir una prueba que corre los seis mensajes de AC-007-44 por `HandleCustomerMessage` con el LLM real y compara el `reply` con el literal de spec §7.4 (`REMINDER_LOCATE`).
+  - **Sugerencias (se aplican si no complican el test):** S-01 (Arrange de 2 fallos en AC-007-49), S-02 (`[n for n, _ in banking.calls] == ["escalate"]` en AC-007-53), S-03 (enunciado corto de la spec en los `Regla:` de la 0.3.0).
+- **Test primero:** `tests/unit/dispute_agent/application/test_handle_customer_message_identification.py::test_ac_007_45_handle_message__located_unverified__fixed_verify_reminder` (aserciones nuevas de H-04). Las correcciones de comentarios no tienen Red separado.
+- **Red:** — (las aserciones nuevas describen comportamiento ya implementado; se comprueba su sensibilidad en al menos H-04, H-05 y H-07 con una mutación temporal que se revierte).
+- **Green:** los cambios de arriba; `uv run pytest -q`, `ruff check .`, `ruff format --check .` y `mypy --strict src` en verde.
+- **Refactor:** —
+
 ## Matriz de trazabilidad
 
 | AC | Tareas | Tests |
@@ -823,7 +1034,7 @@ La auditoría de la spec 0.2.0 dio **No cumple** (1 Bloqueante, 1 Mayor, 0 Menor
 | AC-007-18 | T-007-11, T-007-18 | `test_ac_007_18_dispute_actions__dispute_already_open`, `test_ac_007_18_mcp_adapter__dispute_already_open__exposes_existing_id` |
 | AC-007-19 | T-007-12 | `test_ac_007_19_fraud_actions__already_blocked_or_cancelled` |
 | AC-007-20 | T-007-14 | `test_ac_007_20_handle_message__identification_fails` |
-| AC-007-21 | T-007-14 | `test_ac_007_21_handle_message__multiple_matches__asks_more_data` |
+| AC-007-21 | T-007-14, T-007-42 | `test_ac_007_21_handle_message__multiple_matches__asks_more_data` |
 | AC-007-22 | T-007-14 | `test_ac_007_22_handle_message__no_transactions_or_refinement` |
 | AC-007-23 | T-007-11, T-007-12, T-007-15, T-007-18, T-007-26 | `test_ac_007_23_dispute_actions__open_dispute_failure`, `test_ac_007_23_fraud_actions__block_failure`, `test_ac_007_23_handle_message__consultar_internal__escalates`, `test_ac_007_23_handle_message__write_failure__escalates_without_leaking_error`, `test_ac_007_23_mcp_adapter__timeout__raises_unavailable`, `test_ac_007_23_mcp_adapter__schema_violation__raises_unavailable` |
 | AC-007-24 | T-007-10, T-007-15 | `test_ac_007_24_escalation_service__internal__returns_escalation_failed_without_retry`, `test_ac_007_24_handle_message__escalation_internal` |
@@ -833,7 +1044,7 @@ La auditoría de la spec 0.2.0 dio **No cumple** (1 Bloqueante, 1 Mayor, 0 Menor
 | AC-007-28 | T-007-06, T-007-14 | `test_ac_007_28_dispute_policy__merchant_text_is_ignored`, `test_ac_007_28_handle_message__injected_merchant__escalates` |
 | AC-007-29 | T-007-14, T-007-15, T-007-20 | `test_ac_007_29_handle_message__outcomes_passed_to_llm`, `test_ac_007_29_handle_message__card_blocked_outcome`, `test_ac_007_29_live__spanish_reply__mentions_reason_and_next_steps` (`@pytest.mark.llm`) |
 | AC-007-30 | T-007-16, T-007-17 | `test_ac_007_30_handle_message__every_case_audited`, `test_ac_007_30_agent_json_audit_log__event__json_line_on_stderr` |
-| AC-007-31 | T-007-21, T-007-28 | `test_ac_007_31_chat_api__invalid_requests__rejected_without_calling_llm` |
+| AC-007-31 | T-007-21, T-007-28, T-007-39 | `test_ac_007_31_chat_api__invalid_requests__rejected_without_calling_llm` |
 | AC-007-32 | T-007-03, T-007-04, T-007-19 | `test_ac_007_32_customer_repository__cards__expose_card_ref_as_card_id`, `test_ac_007_32_buscar_cliente__customer_with_two_cards__returns_cards_with_card_id`, `test_ac_007_32_catalog__buscar_cliente__exposes_cards`, `test_ac_007_32_client_contract__buscar_cliente__accepts_real_output_with_cards` |
 | AC-007-33 | T-007-02, T-007-03, T-007-04, T-007-19 | `test_ac_007_33_transaction_rejects_invalid_merchant_country`, `test_ac_007_33_transaction_repository__merchant_country__round_trips`, `test_ac_007_33_consultar_transacciones__us_merchant__returns_merchant_country`, `test_ac_007_33_iniciar_disputa__us_merchant__returns_merchant_country`, `test_ac_007_33_escalar_a_analista__us_merchant__returns_merchant_country`, `test_ac_007_33_catalog__transaction_item__exposes_merchant_country`, `test_ac_007_33_client_contract__transaction_item__accepts_merchant_country` |
 | AC-007-34 | T-007-22 | `test_ac_007_34_chat_e2e__identify_verify_and_dispute__dispute_and_escalation_in_core` |
@@ -846,8 +1057,22 @@ La auditoría de la spec 0.2.0 dio **No cumple** (1 Bloqueante, 1 Mayor, 0 Menor
 | AC-007-41 | T-007-33 | `test_ac_007_41_handle_message__truncated_with_complete_calls__executes_none` |
 | AC-007-42 | T-007-31, T-007-33 | `test_ac_007_42_loop_control__incoherent_or_empty__escalate`, `test_ac_007_42_handle_message__incoherent_or_empty__escalates` |
 | AC-007-43 | T-007-34 | `test_ac_007_43_handle_message__each_llm_response__audited_without_text` |
+| AC-007-44 | T-007-38, T-007-41, T-007-44 | `test_ac_007_44_handle_message__other_topic_unverified__fixed_reminder`, `test_ac_007_44_system_prompt__block_card_without_fraud_is_not_fraud_report`, `test_ac_007_44_live__block_card_without_fraud__no_fraud_or_human_tool` (`@pytest.mark.llm`) |
+| AC-007-45 | T-007-38, T-007-41 | `test_ac_007_45_handle_message__located_unverified__fixed_verify_reminder` |
+| AC-007-46 | T-007-38, T-007-42 | `test_ac_007_46_handle_message__located_customer__asks_for_dates` |
+| AC-007-47 | T-007-38, T-007-43 | `test_ac_007_47_handle_message__wrong_dates__fixed_attempts_reply` |
+| AC-007-48 | T-007-38, T-007-42 | `test_ac_007_48_handle_message__no_match__not_found_then_escalates` |
+| AC-007-49 | T-007-43, T-007-46 | `test_ac_007_49_handle_message__invalid_dates__ask_again_without_attempt`, `test_ac_007_49_mcp_adapter__verify_identity_invalid_input__raises_banking_tool_error` |
+| AC-007-50 | T-007-40, T-007-43 | `test_ac_007_50_handle_message__evaluate_before_verify__blocked_by_guard`, `test_ac_007_50_handle_message__verify_then_evaluate_in_one_message__dispute_opened` |
+| AC-007-51 | T-007-42 | `test_ac_007_51_handle_message__locate_and_dispute_in_one_message__only_identification` |
+| AC-007-52 | T-007-43 | `test_ac_007_52_handle_message__fraud_and_verify_in_one_message__blocks_or_escalates` |
+| AC-007-53 | T-007-41 | `test_ac_007_53_handle_message__unidentified_human_or_fraud__fixed_closing_reply` |
+| AC-007-54 | T-007-41, T-007-46 | `test_ac_007_54_handle_message__failure_during_identification__fixed_closing_reply`, `test_ac_007_54_mcp_adapter__verify_identity_without_verified__raises_unavailable` |
+| AC-007-55 | T-007-45 | `test_ac_007_55_chat_api__new_conversation__does_not_inherit_identification` |
+| AC-007-56 | T-007-41 | `test_ac_007_56_handle_message__rejection__audited_without_text` |
+| AC-007-57 | T-007-41, T-007-45 | `test_ac_007_57_stream__unverified_turn__start_and_end_without_words`, `test_ac_007_57_chat_stream_api__unverified_turn__start_and_end_without_words`, `test_chat_stream__unverified_customer__has_no_account_data` (e2e, AC-009-14 de la spec 009 0.2.0) |
 
-Filas DP: DP-007-01…07 en `test_dispute_policy__each_decision_table_row` (T-007-06). Casos de escalamiento de spec §8: DP-007-02/03/04 (T-007-06, T-007-11), fraude (T-007-12, T-007-15), persona (T-007-15), identidad (T-007-14), falla de herramienta (T-007-11, T-007-12, T-007-15), límite y falla del LLM (T-007-15; en 0.2.0, razón de parada inesperada y respuesta incoherente o vacía: T-007-31, T-007-33), falla de `escalar_a_analista` (T-007-10, T-007-15).
+Filas DP: DP-007-01…07 en `test_dispute_policy__each_decision_table_row` (T-007-06). Casos de escalamiento de spec §8: DP-007-02/03/04 (T-007-06, T-007-11), fraude (T-007-12, T-007-15), persona (T-007-15), identidad (T-007-14), falla de herramienta (T-007-11, T-007-12, T-007-15), límite y falla del LLM (T-007-15; en 0.2.0, razón de parada inesperada y respuesta incoherente o vacía: T-007-31, T-007-33), falla de `escalar_a_analista` (T-007-10, T-007-15). En 0.3.0: persona o fraude sin identificar (T-007-41), falla de `buscar_cliente` y `verificar_identidad` (T-007-41, T-007-46), verificación agotada y cliente no localizada con su texto de cierre (T-007-42, T-007-43).
 
 ---
 
@@ -868,3 +1093,11 @@ Definition of Done según constitución §5.5:
 - [x] Lint, formato y tipado sin errores.
 - [x] Spec actualizada al comportamiento implementado (spec 0.2.0).
 - [x] Sin secretos ni datos reales.
+
+### Cierre de la versión 0.3.0 (issue #45)
+
+- [ ] Todos los AC trazados a tests en verde (AC-007-01…57), con la auditoría `verify-ac-coverage` en `Cumple`.
+- [x] Umbrales de cobertura cumplidos (global 97,21 %; `domain` + `application` 99 %).
+- [x] Lint, formato y tipado sin errores.
+- [x] Spec actualizada al comportamiento implementado (spec 0.3.1; spec 009 0.2.0).
+- [ ] Sin secretos ni datos reales.

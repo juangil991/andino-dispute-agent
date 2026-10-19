@@ -3,10 +3,10 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Versión | 0.2.0 |
+| Versión | 0.3.0 |
 | Estado | Aprobado |
-| Fecha | 2026-10-18 |
-| Spec | [spec.md](./spec.md) — versión 0.2.0 aprobada |
+| Fecha | 2026-10-19 |
+| Spec | [spec.md](./spec.md) — versión 0.3.2 aprobada |
 | Tareas | [tasks.md](./tasks.md) |
 | Constitución | 1.0.1 |
 
@@ -101,6 +101,33 @@ Decisiones triviales tomadas:
 - **Constructores de guion** `tool_use_response(*calls, text="")` y `end_turn_response(text)` en `tests/fakes/fake_llm.py`, para los tests nuevos.
 - **Sin configuración nueva:** `llm_max_iterations` ya es configurable (`AgentSettings`, `create_app`).
 
+### 1.2 Cambios de la versión 0.3.0 (spec 0.3.0, issue #45)
+
+Solo cambia `dispute_agent`. El core, los contratos MCP, `DisputePolicy` y la API HTTP quedan igual. El cambio es acotado porque `decide_turn` ya separa "texto fijo" (`drafted = False`) de "borrador del LLM" (`drafted = True`). `POST /api/chat` y `POST /api/chat/stream` ya tratan `drafted = False` como texto fijo, sin llamada de redacción ni eventos `word` (RN-009-04). Basta con que un turno que termina sin verificar devuelva `drafted = False` y el texto de §7.4 para cumplir RN-007-38 en las dos rutas.
+
+- **Rastro del turno en `Conversation` (dominio).** La conversación gana tres campos de turno: `turn_identification: IdentificationStep | None`, `turn_attempts_remaining: int | None` y `turn_blocked_tools: list[str]`. Se ponen a cero con `begin_turn()` al inicio de cada `decide_turn`. `record_identification(step, attempts_remaining=None)` guarda el **último** resultado de identificación (RN-007-38 (2)). `IdentificationStep ∈ {LOCATED, MORE_DATA_NEEDED, NOT_FOUND, WRONG_DATES, INVALID_DATES}`. El rastro vive en la conversación y no en el caso de uso porque `HandleCustomerMessage` es compartido entre peticiones concurrentes.
+- **Selector puro `select_identification_reply(conv, last_outcome_kind) -> IdentificationReply`** en `domain/identification.py` (stdlib). Implementa el orden de RN-007-38: (1) conversación cerrada ⇒ texto de cierre según `last_outcome_kind` (`ESCALATION_FAILED` o, por defecto, `ESCALATED`); (2) `turn_identification` ⇒ su texto, y `WRONG_DATES` con 2 o 1 intento restante; (3) sin rastro ⇒ `REMINDER_VERIFY` si `located_customer_id` está fijado y `REMINDER_LOCATE` si no. `IdentificationReply` es un `Enum` con los 10 textos de §7.4; los textos están en `domain/messages.py` (`IDENTIFICATION_REPLIES`). Los cierres `ITERATION_LIMIT` y `LLM_FAILURE` no pasan por el selector: `fail_turn` ya devuelve su texto fijo.
+- **`decide_turn`.** Llama a `conv.begin_turn()` antes del ciclo. Al terminar el ciclo normal (`drafted = True`), si `conv.verified_customer_id is None`, sustituye el texto del LLM por `select_identification_reply(...)` y marca `drafted = False` (RN-007-38). Si la cliente quedó verificada en el turno, no toca nada (RN-007-39). Si el texto elegido es `REMINDER_LOCATE` o `REMINDER_VERIFY`, emite el evento `identification_required` (RN-007-42) con `tool=None`, `input={"requested_tools": conv.turn_blocked_tools}`, `output={"reply": <nombre del texto>}`, `rule="RN-007-37"` y `reason="solicitud rechazada por falta de identificación"`. El ciclo no cambia: el LLM sigue llamándose hasta `end_turn` y su texto final se descarta (decisión trivial: así no cambia el número de llamadas ni los eventos `llm_response` de los tests de 0.2.0).
+- **Guardas (RN-007-37).**
+  - `_blocked` añade el nombre de la herramienta a `conv.turn_blocked_tools` (todas las vías de bloqueo pasan por ahí).
+  - `_evaluate_dispute` sin verificar deja de devolver `transaction_not_listed`: pasa a `_blocked(..., "RN-007-01", …)`, sin evaluar con `DisputePolicy`. Con la cliente verificada, `transaction_not_listed` sigue igual.
+  - `consultar_transacciones` y las escrituras reservadas ya se bloquean con `RN-007-01` sin verificar.
+  - La guarda se evalúa por petición con el estado de ese momento (ya es así), lo que da RN-007-37 y AC-007-50.
+- **Identificación.**
+  - `_search_customer` registra `LOCATED` (1 coincidencia sin refinamiento), `MORE_DATA_NEEDED` (varias o `refinement_required`) o `NOT_FOUND` (0).
+  - `_verify_identity` registra `WRONG_DATES` con `attempts_remaining` si `verified = false`, e `INVALID_DATES` si `date.fromisoformat` falla. Ahora captura `BankingToolError` con `code == "INVALID_INPUT"`: registra `INVALID_DATES` y devuelve al LLM `_error(call_id, "invalid_dates", …)`, sin derivar (RN-007-40). Cualquier otro error sigue yendo a `_read_failure` (RN-007-21).
+  - `customer_not_located` no registra nada, y el selector da `REMINDER_LOCATE`.
+- **Fallas de `buscar_cliente` / `verificar_identidad` (RN-007-21 ampliada).** Ya pasan por `_read_failure`: derivan con resumen limitado (porque `EscalationService` no tiene cliente verificado) y cierran. Lo único nuevo es que el `reply` es el cierre `ESCALATED` del selector. La cliente no queda localizada ni verificada porque la excepción salta antes de fijar el estado. No hay cambio de código; lo cubre AC-007-54.
+- **Prompt y descripciones (RN-007-37, `agent-behavior.md` §17).** `SYSTEM_PROMPT` gana una regla: pedir que se bloquee la tarjeta sin declarar sospecha de fraude no es motivo para `reportar_fraude`. La descripción de `reportar_fraude` en `agent_tools.py` dice lo mismo. Ni el `reply` ni la decisión dependen del prompt: la garantía es la guarda y el selector.
+- **Auditoría.** `AuditEventType` gana `"identification_required"`. `JsonAuditLog` no cambia.
+
+Decisiones triviales tomadas:
+
+- **Nombres de los textos fijos en la auditoría:** `output.reply` guarda el nombre del miembro (`REMINDER_LOCATE` / `REMINDER_VERIFY`), no el texto.
+- **`WRONG_DATES` con 0 intentos no existe:** el 3.er fallo deriva y cierra, así que se aplica (1).
+- **`INVALID_INPUT` en `buscar_cliente`:** no lo pide la spec. Sigue como hoy (`_read_failure`).
+- **Spec 009:** su versión 0.2.0 (aprobada con esta) solo cambia RN-009-04 y AC-009-14. Su plan no cambia de diseño; el test de AC-009-14 se ajusta en esta feature.
+
 ## 2. Componentes por capa
 
 Rutas relativas a `src/<app>/`.
@@ -151,6 +178,19 @@ Rutas relativas a `src/<app>/`.
 | `application` | `application/system_prompt.py` | Modificado | Instrucción de no afirmar acciones que no figuren en `outcomes` (RN-007-33). |
 | `infrastructure/outbound` | `infrastructure/outbound/llm/anthropic_llm_adapter.py` — `AnthropicLLMAdapter` | Modificado | Copia `response.stop_reason` en `LLMResponse.stop_reason`. |
 
+**Cambios de la versión 0.3.0** (todos en `dispute_agent`):
+
+| Capa | Componente | Nuevo / Modificado | Cambio |
+|---|---|---|---|
+| `domain` | `domain/identification.py` — `IdentificationStep`, `IdentificationReply`, `select_identification_reply` | Nuevo | Enums y selector puro del orden de RN-007-38 (§1.2). |
+| `domain` | `domain/messages.py` | Modificado | `IDENTIFICATION_REPLIES: dict[IdentificationReply, str]` con los textos exactos de spec §7.4. |
+| `domain` | `domain/models/conversation.py` — `Conversation` | Modificado | Campos `turn_identification`, `turn_attempts_remaining` y `turn_blocked_tools`, y métodos `begin_turn()` y `record_identification()` (§4). |
+| `application` | `application/ports/audit_log.py` — `AuditEventType` | Modificado | Añade `"identification_required"` (RN-007-28, RN-007-42). |
+| `application` | `application/use_cases/handle_customer_message.py` — `HandleCustomerMessage` | Modificado | `begin_turn` y la sustitución por el texto fijo en `decide_turn`. Evento `identification_required`. `_blocked` anota la herramienta. `_evaluate_dispute` sin verificar se bloquea con `RN-007-01`. `_search_customer` y `_verify_identity` registran el paso; `INVALID_INPUT` de `verificar_identidad` ⇒ `INVALID_DATES` sin derivar (RN-007-37 a 42). |
+| `application` | `application/system_prompt.py`, `application/agent_tools.py` | Modificado | Regla y descripción: pedir un bloqueo sin declarar fraude no es `reportar_fraude` (RN-007-37). |
+
+`stream_customer_message.py`, los routers y los adaptadores no cambian: ya respetan `drafted = False`.
+
 ## 3. Puertos y adaptadores
 
 | Puerto | Nuevo / Modificado | Adaptador(es) | Notas |
@@ -158,7 +198,7 @@ Rutas relativas a `src/<app>/`.
 | `LLMPort` | Nuevo (modificado en 0.2.0: `LLMResponse.stop_reason`) | `AnthropicLLMAdapter` | `FakeLLM` guionizado en `tests/fakes/` (§5.3.1); en 0.2.0 infiere la razón de parada si el guion no la trae (desactivable). |
 | `BankingToolsPort` | Nuevo | `McpStdioBankingAdapter` | `FakeBankingTools` programable por herramienta (respuesta o error) y con registro de llamadas. |
 | `ConversationRepository` | Nuevo | `InMemoryConversationRepository` | `get(id) -> Conversation \| None`, `save(conv)`. |
-| `AuditLogPort` (agente) | Nuevo | `JsonAuditLog` | `AgentAuditEvent(conversation_id, at, event_type, tool, input, output, rule, reason)` con `event_type ∈ {tool_call, tool_blocked, decision, escalation, conversation_closed, llm_response}` (`llm_response` desde 0.2.0). `FakeAgentAuditLog` en los tests. |
+| `AuditLogPort` (agente) | Nuevo | `JsonAuditLog` | `AgentAuditEvent(conversation_id, at, event_type, tool, input, output, rule, reason)` con `event_type ∈ {tool_call, tool_blocked, decision, escalation, conversation_closed, llm_response, reply_shown, identification_required}` (`llm_response` desde 0.2.0, `reply_shown` desde la spec 009 e `identification_required` desde 0.3.0). `FakeAgentAuditLog` en los tests. |
 | `Clock` (agente) | Nuevo | `SystemClock` | `FixedAgentClock` en los tests. |
 | `IdGenerator` | Nuevo | `Uuid4Generator` | `SequentialIdGenerator` en los tests. |
 | `CustomerRepository`, `TransactionRepository` (core) | Sin cambio de firma | SQLAlchemy | Solo mapean los campos nuevos. |
@@ -173,6 +213,8 @@ Rutas relativas a `src/<app>/`.
 | `DisputeDecision` | `decision: Decision`, `rule: str` (`DP-007-0N`), `escalation_reason: EscalationReason \| None`, `allowed_actions: frozenset[AgentAction]`, `customer_reason`, `next_steps` | `ESCALATE` ⇔ `escalation_reason` no nulo; `RESOLVE` ⇒ `allowed_actions = {OPEN_DISPUTE}`; `REJECT` ⇒ vacío. |
 | `Outcome` | `kind: OutcomeKind`, `rule`, `reason`, `next_steps`, `transaction_id`, `masked_card`, `reference` | `reason` y `next_steps` no vacíos. |
 | `Conversation` | `conversation_id`, `status` (`ACTIVE` / `ESCALATED`), `located_customer_id`, `verified_customer_id`, `known_cards: tuple[KnownCard, ...]` (`card_id`, `last4`), `failed_searches: int`, `seen_transactions: dict[str, DisputedTransaction]`, `decisions: dict[str, DisputeDecision]`, `blocked_cards: set[str]`, `escalated_keys: set[str]`, `provided_documents: set[str]`, `history: list[ChatMessage]` | Una vez `ESCALATED`, no vuelve a `ACTIVE`. `verified_customer_id` solo se fija tras `verified = true`. `allows_write_for(tx)` es verdadero solo si `decisions[tx].decision` tiene `OPEN_DISPUTE` entre sus acciones. |
+
+Desde 0.3.0, `Conversation` también lleva el rastro del turno: `turn_identification: IdentificationStep | None`, `turn_attempts_remaining: int | None` y `turn_blocked_tools: list[str]`. `begin_turn()` lo pone a cero y `record_identification(step, attempts_remaining)` lo actualiza. El rastro no sobrevive al turno ni influye en la verificación, los contadores o el estado (RN-007-41).
 
 `ChatMessage` (`role`, `content` con texto, `tool_use` y `tool_result`) es un tipo de `application/ports/llm.py`, no del dominio. `Conversation.history` lo guarda de forma opaca, como `list[object]`, tipado en la aplicación.
 
@@ -203,6 +245,8 @@ Todo es ficticio y fijo (Art. 1). Los tests usan builders, no semillas (§5.3.7)
 | `httpx` | `>=0.27,<1` (grupo `dev`) | Lo exige `fastapi.testclient.TestClient` (§2, Testing). | `requests`: TestClient no lo usa. |
 
 Todas están previstas en el tech-stack de la constitución (§2); se justifican aquí según la regla de §2.
+
+Versiones 0.2.0 y 0.3.0: ninguna dependencia nueva.
 
 ## 6. Estrategia de pruebas
 
@@ -245,7 +289,7 @@ Niveles por carpeta:
 | AC-007-18 | `FakeBankingTools.open_dispute` lanza `BankingToolError("DISPUTE_ALREADY_OPEN", "… D-OLD …")`; 1 llamada; `outcome` `DISPUTE_ALREADY_OPEN` con `reference="D-OLD"` | El adaptador extrae el `dispute_id` del `message` real del servidor (sesión MCP en memoria contra el core con SQLite) | — | — |
 | AC-007-19 | Las 2 filas (`already_blocked=true` y `CARD_NOT_BLOCKABLE`): tipo de `outcome` y `prior_actions` | — | — | — |
 | AC-007-20 | Las 2 filas, más las negativas (1–2 fallos, 1 búsqueda vacía → sin derivar) | — | — | — |
-| AC-007-21 | `buscar_cliente` con 2 coincidencias: no se llama a `verify_identity`; el `reply` no contiene los datos listados (el guion del LLM los incluye a propósito, para probar también el filtro); no cuenta como búsqueda fallida | — | — | — |
+| AC-007-21 | `buscar_cliente` con 2 coincidencias: no se llama a `verify_identity`; el `reply` es `ASK_MORE_DATA` (0.3.0) y no contiene los datos listados (el guion del LLM los incluye a propósito); no cuenta como búsqueda fallida | — | — | — |
 | AC-007-22 | Las 2 filas (`[]` y `refinement_required`): `outcomes` `NO_TRANSACTIONS_FOUND` / `REFINEMENT_REQUIRED`; sin `open_dispute` ni `escalate` | — | — | — |
 | AC-007-23 | Las 5 filas con `FakeBankingTools` (`BankingToolError("INTERNAL")` y `BankingToolUnavailableError`): sin `outcome` de éxito; `escalate` con `UNRECOVERABLE_SYSTEM_FAILURE` y el dato afectado; el `reply` sin el código ni la excepción; `ESCALATED` | `McpStdioBankingAdapter`: el tiempo límite (servidor de prueba lento) → `BankingToolUnavailableError`; una respuesta sin `dispute_id` → `BankingToolUnavailableError` | — | — |
 | AC-007-24 | `escalate` lanza `BankingToolError("INTERNAL")` → 1 sola llamada; `outcome` `ESCALATION_FAILED`; `ESCALATED` | — | — | — |
@@ -268,6 +312,20 @@ Niveles por carpeta:
 | AC-007-41 | `max_tokens` con `evaluar_disputa(TX-L1)` y `reportar_fraude("4321")`, con `TX-L1` ya consultada: sin `open_dispute`, sin `block_card`, sin decisión en `conv.decisions`, sin evento `decision`; `LLM_FAILURE`; `ESCALATED` | — | — | — |
 | AC-007-42 | Las 4 filas (`end_turn` vacío, solo espacios, con petición; `tool_use` sin peticiones): ninguna herramienta ejecutada, `UNRECOVERABLE_SYSTEM_FAILURE`, `LLM_FAILURE`, `ESCALATED` | — | — | — |
 | AC-007-43 | `FakeAgentAuditLog` + `FixedAgentClock`: dos mensajes, 3 eventos `llm_response` en orden con `input.call`, `stop_reason`, `decision`, `tool_calls` y `rule` de la tabla; ningún evento `llm_response` contiene el texto del guion; ningún evento contiene el PAN ni `D-1001`. Fila 8/8 de AC-007-38: el evento de la 8.ª llamada tiene `ESCALATE` y `RN-007-23` | — | — | — |
+| AC-007-44 | `test_handle_customer_message_identification.py`, las 6 filas parametrizadas con una conversación nueva: `reply == REMINDER_LOCATE` y sin el texto del guion; `FakeBankingTools` sin llamadas; `conv.decisions` vacío; `outcomes == ()`; `ACTIVE`; `failed_searches == 0` y sin `verify_identity` | `@pytest.mark.llm`: `AnthropicLLMAdapter` real con el prompt del sistema; `bloquea mi tarjeta` sin verificar no produce `reportar_fraude` ni `solicitar_atencion_humana`, y el `reply` de los 6 mensajes es `REMINDER_LOCATE` | — | — |
+| AC-007-45 | Conversación localizada (`ConversationBuilder`) y guion con `consultar_transacciones`: sin `list_transactions`; `reply == REMINDER_VERIFY`; sin `verify_identity`; `ACTIVE` | — | — | — |
+| AC-007-46 | Las 3 filas (`document`, `full_name`, `card_last4`) con `buscar_cliente` → 1 coincidencia: `reply == ASK_DATES`; ni el `reply` ni `outcomes` contienen `C-0001`, `Laura Méndez`, `****01`, `**** 4321` ni `CARD-L1`; sin `verify_identity` | — | — | — |
+| AC-007-47 | Las 3 filas con 0, 1 y 2 fallos previos (el `FakeBankingTools` programa `attempts_remaining` 2 / 1 / 0 y `escalation_required`): `WRONG_DATES` con 2 y con 1; en la 3.ª, `escalate` con `IDENTITY_VERIFICATION_FAILED` limitado, cierre `ESCALATED`, `ESCALATED`. Ningún `reply` contiene `1990-03-15` ni `2008-04-20` | — | — | — |
+| AC-007-48 | Las 2 filas: 1.ª búsqueda vacía → `NOT_FOUND`, `ACTIVE`; 2.ª → `escalate` `INSUFFICIENT_OR_CONTRADICTORY_INFO`, cierre `ESCALATED`. Y la secuencia `0 → varias → 0` → `ACTIVE` | — | — | — |
+| AC-007-49 | Las 2 filas: `15/03/1990` → sin `verify_identity` en `FakeBankingTools`; `1990-03-15` / `1990-03-14` con `verify_identity` lanzando `BankingToolError("INVALID_INPUT")` → 1 llamada. En las dos: `reply == INVALID_DATES`, sin `escalate`, `ACTIVE`, y un 3.er mensaje con las fechas correctas verifica | El adaptador MCP traduce el sobre `INVALID_INPUT` real de `verificar_identidad` (sesión MCP en memoria con SQLite) a `BankingToolError("INVALID_INPUT")` | — | — |
+| AC-007-50 | Las 2 filas: `verificar_identidad` → `evaluar_disputa` (2 llamadas `tool_use`): `open_dispute(TX-L1)`, `DISPUTE_OPENED` y `reply` = texto del guion; misma respuesta con `evaluar_disputa` antes que `verificar_identidad`: `tool_blocked` `RN-007-01` para `evaluar_disputa`, sin `open_dispute`, verificada y `reply` = texto del guion | — | — | — |
+| AC-007-51 | Una respuesta con `buscar_cliente(D-1001)` y `evaluar_disputa(TX-L1)`: `search_customer` llamada; `tool_blocked` `RN-007-01` para `evaluar_disputa`; `conv.decisions` vacío; sin `open_dispute`; `reply == ASK_DATES`; `outcomes == ()` | — | — | — |
+| AC-007-52 | Las 2 filas: fechas correctas → `block_card(CARD-L1)` y `escalate` `FRAUD_SUSPECTED` con `CARD_BLOCKED`; fechas incorrectas → sin `block_card`, `escalate` limitado, cierre `ESCALATED`, `ESCALATED` | — | — | — |
+| AC-007-53 | Las 2 filas sin localizar (`solicitar_atencion_humana`, `reportar_fraude`) y guion final `Te paso con un asesor de inmediato.`: 1 `escalate` limitado con `OTHER` / `FRAUD_SUSPECTED`; sin `block_card`; `reply` = cierre `ESCALATED` sin el texto del guion; `ESCALATED` | — | — | — |
+| AC-007-54 | Las 4 filas con `FakeBankingTools` (`search_customer` → `BankingToolError("INTERNAL")`; `verify_identity` → `INTERNAL`, `BankingToolUnavailableError` por tiempo límite y por esquema): `verified_customer_id` sin fijar (y `located_customer_id` sin fijar en la fila de `buscar_cliente`); `escalate` `UNRECOVERABLE_SYSTEM_FAILURE` limitado; `reply` = cierre `ESCALATED` sin el código ni la excepción; `ESCALATED` | `McpStdioBankingAdapter`: una salida de `verificar_identidad` sin `verified` → `BankingToolUnavailableError` (modelo espejo) | — | — |
+| AC-007-55 | — | `TestClient(create_app(..., fakes))`: la conversación `A` se verifica por guion; un mensaje sin `conversation_id` crea `B ≠ A`; `consultar_transacciones` no llega a `FakeBankingTools`; `reply == REMINDER_LOCATE`; `A` sigue verificada en el repositorio | — | — |
+| AC-007-56 | `FakeAgentAuditLog` + `FixedAgentClock`, las 3 filas: exactamente 1 evento `identification_required` con `conversation_id`, `at`, `rule`, `reason`, `input.requested_tools` y `output.reply == "REMINDER_LOCATE"`; un `tool_blocked` por herramienta listada; ningún evento contiene el texto del mensaje, el del guion, `4111111111114321` ni `D-1001`. Negativos: los turnos de AC-007-46/47/48/49/51 no emiten `identification_required` | — | — | — |
+| AC-007-57 | `test_stream_customer_message_identification.py`: conversación nueva, `hola` y guion `end_turn`: eventos `ReplyStarted` y `ReplyEnded` sin `ReplyWord`; `reply == REMINDER_LOCATE`; `ACTIVE`; el `FakeLLM` no recibe llamada de redacción (`stream`) | `POST /api/chat/stream` con `TestClient`: el cuerpo SSE trae `start` y `end` sin `word` | — | AC-009-14 (spec 009 v0.2.0) actualizado en `tests/e2e/test_chat_stream_e2e.py`: con el MCP real, `start` y `end` con `REMINDER_LOCATE`, sin `word` y sin datos de las semillas |
 
 Adicionales:
 
@@ -279,6 +337,15 @@ Adicionales:
   - Límite del loop: AC-007-25 y AC-007-38.
   - Razón de parada (0.2.0): AC-007-40, AC-007-41 y AC-007-42 simulan un LLM que viola el protocolo y comprueban que la guarda actúa antes de ejecutar nada (`agent-behavior.md` §6).
 - **Regresión 0.2.0:** los tests de AC-007-01 a 34 siguen en verde sin cambiar sus guiones, gracias a la inferencia del `FakeLLM`. Las afirmaciones que cuentan todos los eventos de auditoría de un turno se acotan al tipo de evento que verifican, para que los nuevos `llm_response` no las rompan.
+- **Regresión 0.3.0 (inventario por lectura del código, a confirmar al ejecutar la suite):** 12 tests que hoy esperan el texto del guion del LLM en un turno que termina sin verificar. Se adaptan en una tarea propia, sin cambiar lo que el criterio verifica: si el criterio no trata de la identificación, la precondición pasa a cliente verificada (`ConversationBuilder`); si sí trata de ella, la expectativa pasa al texto fijo de §7.4. En el historial se guarda el texto que vio la cliente (el fijo), porque `complete_turn` guarda el `reply` final.
+  - `test_handle_customer_message.py`: `test_ac_007_21_handle_message__multiple_matches__asks_more_data` (pasa a esperar `ASK_MORE_DATA`), `test_handle_message__no_conversation_id__creates_new_conversation`, `test_handle_message__second_turn__sends_saved_history_to_llm` y `test_handle_message__evaluate_unlisted_transaction__not_listed[unverified_seen]` (pasa a esperar `tool_blocked` `RN-007-01`; el caso `[verified_unseen]` no cambia).
+  - `test_chat_api.py`: `test_ac_007_31_chat_api__invalid_requests__rejected_without_calling_llm` y `test_chat_api__pan_in_llm_reply__is_redacted` (usa una conversación verificada para seguir probando el filtro de RN-007-26).
+  - `test_chat_stream_api.py`: `test_chat_stream__valid_input__emits_start_word_and_end_events`, `test_chat_stream__draft_cut__emits_interrupted_event` y `test_chat_endpoint__unchanged_by_stream_endpoint__keeps_json_contract` (los tres pasan a conversación verificada).
+  - `test_chat_page_serving.py`: `test_ac_008_25_chat_page__get_root_and_static__served_by_agent_app`.
+  - `tests/e2e/test_chat_stream_e2e.py`: `test_chat_stream__unverified_customer__has_no_account_data` (es AC-009-14, ver AC-007-57).
+  - Auditoría: `test_ac_007_30_handle_message__every_case_audited` recorre todos los eventos y exige un `event_type` del `Literal`, `input` y `output` no nulos, y `rule` y `reason` no vacíos. El evento `identification_required` se emite completo. `test_ac_007_26_handle_message__closed_conversation__no_calls` exige que un turno en conversación cerrada no emita eventos: `identification_required` solo se emite en turnos que pasan por el ciclo.
+  - Sin cambios: los tests de `decide_turn`, `stop_reason`, los de streaming con conversación verificada, los del adaptador de Anthropic y todos los de navegador (`tests/e2e/web/*`), que responden con guiones HTTP propios y no muestran texto del backend real.
+  - Ningún test existente afirma que `INVALID_INPUT` de `verificar_identidad` derive: el de `_read_failure` usa `INTERNAL`.
 - **Contrato en ambos lados (`mcp-testing.md` §1):** `tests/contract/dispute_agent/test_banking_client_contract.py` valida los modelos espejo del adaptador contra la salida real de las 6 herramientas (sesión MCP en memoria) y contra los sobres de error. También comprueba que rechazan campos extra.
 - **Regresión del core:** las suites de 001–006 siguen en verde. Las afirmaciones de igualdad exacta de campos (`TransactionItem` y cliente de `buscar_cliente`) se actualizan para incluir los campos nuevos, sin ningún otro cambio de comportamiento.
 - **Fronteras:** el hook `check_mcp_boundaries` impide importar `core_banking_mcp` desde `dispute_agent`. Un test unitario recorre `src/dispute_agent` y falla si algún módulo importa `core_banking_mcp` o `sqlalchemy`.
@@ -299,6 +366,10 @@ Cobertura: `pytest --cov` con `fail_under=80` global. En la verificación final,
 | (0.2.0) El SDK de Anthropic devuelve una razón de parada nueva o renombrada y el agente deriva conversaciones válidas | Medio | Por diseño es el comportamiento seguro (Art. 10, RN-007-34). Cada derivación queda auditada con la razón recibida, y una prueba `@pytest.mark.llm` existente detectaría el cambio. |
 | (0.2.0) Los eventos `llm_response` rompen tests de auditoría que cuentan todos los eventos | Bajo | Se acotan esas afirmaciones al tipo de evento (§6, "Regresión 0.2.0"). |
 | (0.2.0) Con `end_turn` vacío tras acciones ya hechas en el turno (p. ej. disputa abierta), la conversación se deriva y se cierra | Bajo | Lo exige la spec (RN-007-35). La disputa abierta queda en `outcomes` y `_fail_turn` no duplica derivaciones. |
+| (0.3.0) Tests existentes de 007, 008 y 009 con turnos sin verificar que esperan el texto del guion del LLM (o sus `word`) dejan de pasar | Alto | Inventario en §6, "Regresión 0.3.0". Esos tests se adaptan en una tarea propia: la precondición pasa a cliente verificada cuando el criterio no trata de la identificación, o la expectativa pasa al texto fijo cuando sí trata de ella. Nunca se cambia lo que el criterio verifica. |
+| (0.3.0) El LLM interpreta "bloquea mi tarjeta" como fraude y la conversación se deriva y se cierra en vez de recibir el recordatorio | Medio | Regla en el prompt y en la descripción de `reportar_fraude`, verificada por la prueba `@pytest.mark.llm` de AC-007-44. Si el LLM se equivoca, el resultado es seguro (deriva sin bloquear, RN-007-17). |
+| (0.3.0) El texto del LLM en un turno sin verificar se pierde aunque fuera útil | Bajo | Es lo que exige la spec (RN-007-38): la guía la dan los textos fijos de §7.4. |
+| (0.3.0) Se sigue llamando al LLM hasta `end_turn` aunque su texto final se descarte | Bajo | Coste de una llamada por turno sin verificar. Se mantiene para no alterar el ciclo de 0.2.0 ni sus eventos `llm_response`. |
 | La redacción de RN-007-26 se come números legítimos largos (p. ej. referencias de 13+ dígitos) | Bajo | Los `dispute_id` y `escalation_id` del core son `DSP-` / `ESC-` + 6 dígitos y los montos tienen menos de 13 dígitos. Es aceptable y lo exige la spec. |
 
 ## 8. Cumplimiento de la constitución
@@ -306,15 +377,15 @@ Cobertura: `pytest --cov` con `fail_under=80` global. En la verificación final,
 | Artículo | Estado | Justificación |
 |---|---|---|
 | Art. 1 — Datos ficticios | Cumple | Las semillas nuevas (`TX-000010`, `TX-000011`, países) son ficticias y fijas; los tests usan builders y el e2e su propia base temporal. |
-| Art. 2 — Spec-anchored | Cumple | Implementa la spec 0.2.0 aprobada. Los 43 AC están trazados en §6. Las specs 001, 003, 004 y 006 se actualizan en el mismo PR para reflejar los campos nuevos (§4.3.3). |
+| Art. 2 — Spec-anchored | Cumple | Implementa la spec 0.3.0 aprobada. Los 57 AC están trazados en §6, y la spec 009 se alinea (0.2.0) en el mismo cambio. Las specs 001, 003, 004 y 006 se actualizan en el mismo PR para reflejar los campos nuevos (§4.3.3). |
 | Art. 3 — TDD | Cumple | Cada tarea empezará por su test. El dominio puro y los fakes (`FakeLLM`, `FakeBankingTools`) permiten el ciclo rojo-verde sin I/O. |
 | Art. 4 — Arquitectura hexagonal | Cumple | `DisputePolicy`, `Conversation` y la redacción usan solo stdlib. FastAPI, Anthropic, MCP y Pydantic quedan en infraestructura. Cableado solo en `main.py` y `server.py`; lo refuerza el hook. |
 | Art. 5 — El dominio decide | Cumple | Las decisiones las toma `DisputePolicy`. El LLM solo interpreta (herramientas de intención) y redacta; nunca ejecuta escrituras ni puede alterar `outcomes` (AC-007-07, AC-007-08, AC-007-28). |
 | Art. 6 — Acciones vía MCP | Cumple | `dispute_agent` solo accede al core con `McpStdioBankingAdapter` (cliente MCP stdio); sin imports del core ni SQLAlchemy (hook y test de fronteras). |
-| Art. 7 — Identificación antes que información | Cumple | La guarda de RN-007-01 bloquea antes de llegar al servidor, que valida de nuevo. El LLM no ve datos de `buscar_cliente` antes de verificar y la salida se filtra (AC-007-02, AC-007-21, AC-007-27). |
-| Art. 8 — Auditoría | Cumple | Hay eventos de llamada a herramienta (incluidas las bloqueadas), de decisión, de derivación o cierre y, desde 0.2.0, de cada respuesta del LLM sin su texto (AC-007-43), con `conversation_id`, reloj inyectado, entrada, salida, regla y motivo, sin PAN ni documento (AC-007-30). |
+| Art. 7 — Identificación antes que información | Cumple | La guarda de RN-007-01 bloquea antes de llegar al servidor, que valida de nuevo. El LLM no ve datos de `buscar_cliente` antes de verificar y la salida se filtra (AC-007-02, AC-007-21, AC-007-27). Desde 0.3.0, ningún texto del LLM llega a la cliente sin verificar: el `reply` es un texto fijo y `evaluar_disputa` también se bloquea (AC-007-44 a 57). |
+| Art. 8 — Auditoría | Cumple | Hay eventos de llamada a herramienta (incluidas las bloqueadas), de decisión, de derivación o cierre y, desde 0.2.0, de cada respuesta del LLM sin su texto (AC-007-43) y, desde 0.3.0, de cada rechazo por falta de identificación sin el texto de la cliente (AC-007-56), con `conversation_id`, reloj inyectado, entrada, salida, regla y motivo, sin PAN ni documento (AC-007-30). |
 | Art. 9 — Secretos | Cumple | `ANTHROPIC_API_KEY` solo por entorno (`SecretStr`); `.env.example` gana las claves sin valor. |
-| Art. 10 — Ante la duda, escalar | Cumple | Las fallas de herramientas o del LLM, las salidas inválidas, el límite de iteraciones, la moneda sin tasa y la tarjeta ambigua en un fraude derivan por defecto (AC-007-03, 10, 23, 25). Desde 0.2.0, también toda razón de parada inesperada o respuesta incoherente, sin ejecutar ninguna petición (AC-007-40 a 42). |
+| Art. 10 — Ante la duda, escalar | Cumple | Las fallas de herramientas o del LLM, las salidas inválidas, el límite de iteraciones, la moneda sin tasa y la tarjeta ambigua en un fraude derivan por defecto (AC-007-03, 10, 23, 25). Desde 0.2.0, también toda razón de parada inesperada o respuesta incoherente, sin ejecutar ninguna petición (AC-007-40 a 42). Desde 0.3.0, también las fallas de `buscar_cliente` y `verificar_identidad` (AC-007-54). |
 
 ---
 

@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `009-streaming-agent-reply` |
-| Versión | 0.1.1 |
+| Versión | 0.2.0 |
 | Estado | Aprobada |
 | Fecha | 2026-10-18 |
 | Origen | Issue [#42](https://github.com/juangil991/andino-dispute-agent/issues/42) del backlog (P2) |
@@ -64,7 +64,7 @@ Esta spec amplía, sin romper sus contratos:
 | RN-009-01 | El agente expone `POST /api/chat/stream` (§7.1), con la misma entrada y las mismas validaciones que `POST /api/chat` (spec 007 §7.3). Responde `422` o `404` como error HTTP antes de transmitir nada. Si la entrada es válida, responde `200` con un flujo de eventos. `POST /api/chat` no cambia. Ambos endpoints comparten las conversaciones. | Clarificación 2026-10-18; spec 007 §7.3 |
 | RN-009-02 | En `POST /api/chat/stream`, el agente emite el evento `start` con el `conversation_id` y ejecuta el turno igual que en la spec 007 (guardas, `DisputePolicy`, herramientas MCP, derivaciones, cierre y auditoría, RN-007-01 a RN-007-36), **sin enviar texto a la cliente**. El texto de la respuesta `end_turn` del ciclo no se envía: lo sustituye la llamada de redacción (RN-009-03). | Art. 5; issue #42; clarificación 2026-10-18 |
 | RN-009-03 | Si el ciclo termina con una respuesta `end_turn` válida (RN-007-32), el agente hace **exactamente una** llamada de redacción al LLM, y solo cuando todas las decisiones, acciones y registros de auditoría del turno ya terminaron. La llamada recibe el historial de la conversación y los `outcomes` del turno, **no ofrece ninguna herramienta** y sus instrucciones piden redactar la respuesta en español a partir de los `outcomes`, sin afirmar acciones que no figuren en ellos. No cuenta en el máximo de 8 llamadas de RN-007-23. | Clarificación 2026-10-18; Art. 5; RN-007-33 |
-| RN-009-04 | Cuando la spec 007 fija el `reply` como texto fijo, no hay llamada de redacción: el agente envía el texto completo en el evento `end`, sin eventos `word`. Son los casos de `ITERATION_LIMIT` y `LLM_FAILURE` del ciclo (spec 007 §7.3) y el de conversación ya cerrada (RN-007-24). | Spec 007 §7.3; issue #42 |
+| RN-009-04 | Cuando la spec 007 fija el `reply` como texto fijo, no hay llamada de redacción: el agente envía el texto completo en el evento `end`, sin eventos `word`. Son los casos de `ITERATION_LIMIT` y `LLM_FAILURE` del ciclo (spec 007 §7.3), el de conversación ya cerrada (RN-007-24) y, desde la spec 007 v0.3.0, todo turno que termina sin identidad verificada (RN-007-38, textos fijos de 007 §7.4). | Spec 007 §7.3 y §7.4; issue #42; issue #45 |
 | RN-009-05 | El texto de la llamada de redacción nunca se interpreta para ejecutar acciones ni para darlas por hechas (RN-007-33). Ninguna acción del turno se ejecuta, cambia ni se deshace por lo que diga ese texto, ni completo ni parcial. | Art. 5; RN-007-33; issue #42 |
 
 ### 4.2 Transmisión palabra por palabra
@@ -305,12 +305,12 @@ Cubre: RN-009-12
 
 ### AC-009-14 — Sin identidad verificada no se transmiten datos de la cuenta (e2e)
 
-Cubre: HU-009-05, RN-009-26
+Cubre: HU-009-05, RN-009-04, RN-009-26
 
 - **Given** el servidor MCP real por stdio con las semillas, y una cliente que aún no verificó su identidad y solo escribió `No reconozco un cobro`
-- **When** el ciclo termina pidiendo su documento y la redacción entrega `"Para ayudarte necesito tu número de documento."`
-- **Then** la entrada de la llamada de redacción no contiene resultados de `consultar_transacciones`, `iniciar_disputa` ni `bloquear_tarjeta`, ni datos de clientes de las semillas
-- **And** los fragmentos transmitidos no contienen transacciones, tarjetas (`****`) ni datos personales
+- **When** el ciclo termina con `end_turn` sin que la cliente quede verificada
+- **Then** no hay llamada de redacción ni eventos `word`: el flujo es `start` y `end` con el texto fijo `REMINDER_LOCATE` de la spec 007 §7.4 (RN-007-38) y `status = "ACTIVE"`
+- **And** el flujo no contiene transacciones, tarjetas (`****`) ni datos personales
 
 ### AC-009-15 — La respuesta aparece palabra por palabra en la página
 
@@ -564,6 +564,7 @@ Ninguna.
 | 0.1.0 | 2026-10-18 | Versión inicial a partir de la issue #42 | Juangiov (con Claude Code) |
 | 0.1.0 | 2026-10-18 | Spec aprobada por el usuario | Juangiov |
 | 0.1.1 | 2026-10-18 | Enmienda PATCH tras la auditoría de AC (decisión del usuario): §7.1 aclara que la página no valida `outcomes`; AC-009-26 incorpora RN-009-24 en `Cubre:`. Sin cambio de comportamiento ni del plan. | Juangiov (con Claude Code) |
+| 0.2.0 | 2026-10-19 | Alineación con la spec 007 v0.3.0 (issue #45): RN-009-04 incluye los turnos que terminan sin identidad verificada (texto fijo, sin redacción) y AC-009-14 espera `REMINDER_LOCATE` en `end`, sin `word`. Aprobada por el usuario junto con la 007 v0.3.0. | Juangiov (con Claude Code) |
 
 ---
 

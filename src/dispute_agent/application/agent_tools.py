@@ -113,8 +113,9 @@ LLM_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="reportar_fraude",
         description=(
-            "Úsala solo si el cliente declara sospecha de fraude. La aplicación decide y "
-            "ejecuta las acciones de protección correspondientes."
+            "Úsala solo si el cliente declara sospecha de fraude. Pedir que se bloquee la "
+            "tarjeta sin declarar sospecha de fraude no es motivo para reportar_fraude. La "
+            "aplicación decide y ejecuta las acciones de protección correspondientes."
         ),
         input_schema=_object(
             {

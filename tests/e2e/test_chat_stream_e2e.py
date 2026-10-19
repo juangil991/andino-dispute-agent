@@ -7,7 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from tests.fakes.fake_llm import FakeLLM, StreamScript, end_turn_response
+from tests.fakes.fake_llm import FakeLLM, end_turn_response
 from tests.fakes.fixed_agent_clock import FixedAgentClock
 
 from core_banking_mcp.infrastructure.outbound.persistence.database import create_engine_from_url
@@ -20,12 +20,14 @@ from core_banking_mcp.infrastructure.outbound.persistence.seeds.disputes import 
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.transactions import (
     SEED_TRANSACTIONS,
 )
-from dispute_agent.application.ports.llm import ChatMessage, LLMStreamEnd
 from dispute_agent.config import AgentSettings
 from dispute_agent.main import create_app
 
 _REPLY = "Para ayudarte necesito tu número de documento."
-_CHUNKS = ["Para ", "ayudarte ", "necesito ", "tu ", "número ", "de ", "documento."]
+_REMINDER_LOCATE = (
+    "Antes de ayudarte necesito identificarte. Indícame tu número de documento, "
+    "tu nombre completo o los últimos 4 dígitos de tu tarjeta."
+)
 
 
 def _seed_secrets() -> list[str]:
@@ -37,15 +39,6 @@ def _seed_secrets() -> list[str]:
     for transaction in SEED_TRANSACTIONS:
         secrets += [transaction.transaction_id, transaction.card_id, transaction.merchant]
     return secrets
-
-
-def _message_texts(message: ChatMessage) -> list[str]:
-    texts = [message.text]
-    for call in message.tool_calls:
-        texts += [call.id, call.name, json.dumps(call.arguments, default=str)]
-    for result in message.tool_results:
-        texts += [result.tool_call_id, result.content]
-    return texts
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
@@ -60,12 +53,11 @@ def _parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
     return events
 
 
-# Regla: RN-009-26 — La llamada de redacción no tiene herramientas y solo recibe el historial y
-# los `outcomes` del turno; antes de verificar la identidad (Art. 7) las guardas de la spec 007
-# impiden que ese historial contenga datos de la cuenta, por lo que lo transmitido no los incluye.
-# AC-009-14 · Art. 7
+# Regla: RN-009-26 y RN-007-38 — antes de verificar la identidad (Art. 7) el `reply` es un texto
+# fijo que se envía completo en `end`, sin llamada de redacción y sin datos de la cuenta.
+# AC-009-14 (spec 009 0.2.0) · Art. 7
 def test_chat_stream__unverified_customer__has_no_account_data(tmp_path: Path) -> None:
-    """AC-009-14: sin identidad verificada, redacción y flujo no contienen datos de cuenta."""
+    """AC-009-14: sin identidad verificada el flujo es start y end con REMINDER_LOCATE."""
     url = f"sqlite:///{(tmp_path / 'core.db').as_posix()}"
     settings = AgentSettings(
         core_database_url=url,
@@ -73,35 +65,26 @@ def test_chat_stream__unverified_customer__has_no_account_data(tmp_path: Path) -
         mcp_call_timeout_seconds=20,
         _env_file=None,  # type: ignore[call-arg]
     )
-    stream: list[StreamScript] = [([(0.0, chunk) for chunk in _CHUNKS], LLMStreamEnd("end_turn"))]
-    llm = FakeLLM([end_turn_response(_REPLY)], stream_script=stream)
+    llm = FakeLLM([end_turn_response(_REPLY)])
     with TestClient(create_app(settings, llm=llm, clock=FixedAgentClock())) as client:
         response = client.post("/api/chat/stream", json={"message": "No reconozco un cobro"})
 
     assert response.status_code == 200
     secrets = _seed_secrets()
 
-    # (1) Entrada de la redacción: una sola llamada, sin datos de cuenta ni de las semillas.
-    assert len(llm.stream_requests) == 1
-    request = llm.stream_requests[0]
-    inputs = [request.system]
-    for message in request.messages:
-        inputs += _message_texts(message)
-    for text in inputs:
-        assert not [s for s in secrets if s in text]
-    assert not [t for t in inputs if "consultar_transacciones" in t and "TX-" in t]
-    assert all(not m.tool_results for m in request.messages)
+    # (1) Sin llamada de redacción: el texto es fijo (RN-007-38).
+    assert len(llm.stream_requests) == 0
 
-    # (2) Fragmentos transmitidos.
+    # (2) Flujo: start y end, sin eventos word, con el literal de spec 007 §7.4.
     events = _parse_sse(response.text)
-    words = [data["text"] for name, data in events if name == "word"]
-    assert "".join(words) == _REPLY
-    for word in words:
-        assert not [s for s in secrets if s in word]
-
-    # (3) Cierre normal sin resultados.
+    assert [name for name, _ in events] == ["start", "end"]
     name, end = events[-1]
     assert name == "end"
+    assert end["reply"] == _REMINDER_LOCATE
+    assert _REPLY not in end["reply"]
+    assert not [s for s in secrets if s in end["reply"]]
+
+    # (3) Cierre normal sin resultados.
     assert end["status"] == "ACTIVE"
     assert end["outcomes"] == []
 
