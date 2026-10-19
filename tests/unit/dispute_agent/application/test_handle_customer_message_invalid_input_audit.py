@@ -1,0 +1,166 @@
+"""Tests de auditoría de HandleCustomerMessage ante fallas de lectura.
+
+Spec 010: AC-010-10 (filas de `consultar_transacciones`), RN-010-08.
+"""
+
+from datetime import UTC, datetime
+from decimal import Decimal
+
+import pytest
+from tests.fakes.banking_errors import invalid_input
+from tests.fakes.conversation_builder import ConversationBuilder
+from tests.fakes.fake_agent_audit_log import FakeAgentAuditLog
+from tests.fakes.fake_banking_tools import FakeBankingTools
+from tests.fakes.fake_llm import FakeLLM
+from tests.fakes.fixed_agent_clock import FixedAgentClock
+from tests.fakes.sequential_id_generator import SequentialIdGenerator
+
+from dispute_agent.application.ports.banking_tools import (
+    BankingToolError,
+    BankingToolUnavailableError,
+    EscalationRegistered,
+)
+from dispute_agent.application.ports.llm import LLMResponse, ToolCall
+from dispute_agent.application.use_cases.dispute_actions import DisputeActions
+from dispute_agent.application.use_cases.escalation_service import EscalationService
+from dispute_agent.application.use_cases.fraud_actions import FraudActions
+from dispute_agent.application.use_cases.handle_customer_message import HandleCustomerMessage
+from dispute_agent.domain.models.conversation import Conversation, KnownCard
+from dispute_agent.domain.policies.dispute_policy import DisputePolicy
+
+_NOW = datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
+_CARD = KnownCard("CARD-L1", "4321")
+_LIST_ARGS: dict[str, object] = {
+    "card_last4": "4321",
+    "date_from": "2026-09-01",
+    "date_to": "2026-10-17",
+}
+
+
+class _Repo:
+    """Repositorio de conversaciones en memoria, local al test."""
+
+    def __init__(self, *conversations: Conversation) -> None:
+        self.items = {c.conversation_id: c for c in conversations}
+
+    def get(self, conversation_id: str) -> Conversation | None:
+        return self.items.get(conversation_id)
+
+    def save(self, conversation: Conversation) -> None:
+        self.items[conversation.conversation_id] = conversation
+
+
+def _build(
+    script: list[LLMResponse], banking: FakeBankingTools, conv: Conversation
+) -> tuple[HandleCustomerMessage, FakeAgentAuditLog]:
+    audit = FakeAgentAuditLog()
+    clock = FixedAgentClock(_NOW)
+    escalation = EscalationService(banking, audit, clock)
+    dispute_actions = DisputeActions(
+        DisputePolicy(Decimal(4000)), banking, escalation, audit, clock
+    )
+    fraud_actions = FraudActions(banking, dispute_actions, escalation, audit, clock)
+    use_case = HandleCustomerMessage(
+        FakeLLM(script),
+        banking,
+        _Repo(conv),
+        dispute_actions,
+        fraud_actions,
+        escalation,
+        audit,
+        clock,
+        SequentialIdGenerator(),
+        8,
+    )
+    return use_case, audit
+
+
+# Regla: RN-010-08 — Antes de derivar por RN-007-21, el agente registra un `tool_call` con la
+# herramienta, el código del error y, si es `INVALID_INPUT`, el campo inválido, con la regla
+# `RN-007-21`. El motivo de `conversation_closed` y la nota de la derivación incluyen también el
+# campo cuando el código es `INVALID_INPUT`.
+# AC-010-10 · Art. 8
+@pytest.mark.parametrize(
+    ("failure", "expected_output"),
+    [
+        (BankingToolError("INTERNAL", "falla interna", False), {"error": "INTERNAL"}),
+        (BankingToolUnavailableError("tiempo límite"), {"error": "UNAVAILABLE"}),
+    ],
+    ids=["internal", "timeout"],
+)
+async def test_ac_010_10_read_failure__internal_or_timeout__audits_tool_call_before_escalation(
+    failure: Exception, expected_output: dict[str, object]
+) -> None:
+    detail = f"falla irrecuperable en consultar_transacciones ({expected_output['error']})"
+    """AC-010-10: la falla de consultar_transacciones deja un tool_call antes de derivar."""
+    conv = ConversationBuilder().verified("C-0001", (_CARD,)).build()
+    banking = (
+        FakeBankingTools()
+        .respond("list_transactions", failure)
+        .respond("escalate", EscalationRegistered("E-0001", "PENDING", _NOW, "OTHER"))
+    )
+    use_case, audit = _build(
+        [
+            LLMResponse(tool_calls=(ToolCall("c1", "consultar_transacciones", dict(_LIST_ARGS)),)),
+            LLMResponse(text="Derivamos tu caso."),
+        ],
+        banking,
+        conv,
+    )
+
+    await use_case.handle(conv.conversation_id, "Quiero disputar un cobro")
+
+    types = [e.event_type for e in audit.events]
+    call_index = types.index("tool_call")
+    assert call_index < types.index("escalation") < types.index("conversation_closed")
+    event = audit.events[call_index]
+    assert event.tool == "consultar_transacciones"
+    assert event.rule == "RN-007-21"
+    assert event.output == expected_output
+    escalate_args = next(args for name, args in banking.calls if name == "escalate")
+    assert escalate_args["note"] == f"RN-007-21: {detail}"
+    closed = next(e for e in audit.events if e.event_type == "conversation_closed")
+    assert closed.reason == detail
+
+
+# Regla: RN-010-07 — Cada `INVALID_INPUT` corregible genera un `tool_call` con la herramienta, la
+# entrada filtrada, la salida `{error, field, correction, of}`, la regla `RN-010-01` y el motivo
+# fijo.
+# AC-010-09 · Art. 8
+async def test_ac_010_09_handle_message__invalid_input__audits_correctable_tool_call() -> None:
+    """AC-010-09: el rechazo corregible deja un tool_call sin texto del servidor."""
+    conv = ConversationBuilder().verified("C-0001", (_CARD,)).build()
+    banking = FakeBankingTools().respond(
+        "list_transactions", invalid_input("date_to", "texto del servidor")
+    )
+    use_case, audit = _build(
+        [
+            LLMResponse(
+                tool_calls=(
+                    ToolCall(
+                        "c1",
+                        "consultar_transacciones",
+                        {**_LIST_ARGS, "date_to": "2026-10-20"},
+                    ),
+                )
+            ),
+            LLMResponse(text="Revisemos las fechas."),
+        ],
+        banking,
+        conv,
+    )
+
+    await use_case.handle(conv.conversation_id, "Quiero disputar un cobro")
+
+    events = [e for e in audit.events if e.event_type == "tool_call"]
+    assert len(events) == 1
+    event = events[0]
+    assert event.conversation_id == conv.conversation_id
+    assert event.at == _NOW
+    assert event.tool == "consultar_transacciones"
+    assert event.input == {**_LIST_ARGS, "date_to": "2026-10-20"}
+    assert event.output == {"error": "INVALID_INPUT", "field": "date_to", "correction": 1, "of": 2}
+    assert event.rule == "RN-010-01"
+    assert event.reason == "argumentos rechazados por el core; se devuelven al LLM para corregirlos"
+    assert "texto del servidor" not in str(event)
+    assert "conversation_closed" not in [e.event_type for e in audit.events]

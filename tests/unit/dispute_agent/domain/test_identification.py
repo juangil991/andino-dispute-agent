@@ -47,6 +47,10 @@ _LITERALS: dict[IdentificationReply, str] = {
         "Las fechas no son válidas. Indícame tu fecha de nacimiento y la fecha de "
         "expedición de tu documento con el formato AAAA-MM-DD."
     ),
+    IdentificationReply.INVALID_SEARCH: (
+        "Esos datos no son válidos. Revísalos e indícame tu número de documento, "
+        "tu nombre completo o los últimos 4 dígitos de tu tarjeta."
+    ),
     IdentificationReply.CLOSED_ESCALATED: (
         "Tu caso requiere la revisión de una persona. Una persona continuará la atención."
     ),
@@ -151,9 +155,26 @@ def test_identification_replies__match_spec_literal_and_leak_nothing(
 
 
 def test_identification_replies__cover_every_reply() -> None:
-    """Spec §7.4: hay exactamente 10 textos fijos."""
+    """Spec §7.4: hay exactamente 11 textos fijos (10 de la spec 007 + INVALID_SEARCH)."""
     assert set(IDENTIFICATION_REPLIES) == set(IdentificationReply)
-    assert len(IdentificationReply) == 10
+    assert len(IdentificationReply) == 11
+
+
+# Regla: RN-010-06 — INVALID_INPUT de buscar_cliente sin verificar responde con texto fijo.
+# AC-010-08 · Art. 7 (sin identificación no hay datos)
+def test_ac_010_08_select_identification_reply__invalid_search_step__returns_fixed_text() -> None:
+    """AC-010-08: INVALID_INPUT de buscar_cliente sin verificar da el texto INVALID_SEARCH."""
+    conv = _conv(step=IdentificationStep.INVALID_SEARCH)
+    reply = select_identification_reply(conv, None)
+    assert reply is IdentificationReply.INVALID_SEARCH
+    assert IDENTIFICATION_REPLIES[reply] == (
+        "Esos datos no son válidos. Revísalos e indícame tu número de documento, "
+        "tu nombre completo o los últimos 4 dígitos de tu tarjeta."
+    )
+    assert conv.status is ConversationStatus.ACTIVE
+    # RN-007-41: un paso posterior del mismo turno gana (último resultado).
+    conv.record_identification(IdentificationStep.LOCATED)
+    assert select_identification_reply(conv, None) is IdentificationReply.ASK_DATES
 
 
 def test_conversation_begin_turn__resets_identification_trace() -> None:

@@ -73,6 +73,19 @@ def test_conversation_record_search_counts_only_empty_without_refinement() -> No
     assert conv.failed_searches == 2
 
 
+# Regla: RN-010-03 — el contador de entradas inválidas es del turno y se reinicia al comenzar otro.
+# AC-010-06 · Art. 10 (ante la duda, escalar)
+def test_ac_010_06_conversation__register_invalid_input__counts_and_begin_turn_resets() -> None:
+    """AC-010-06: el contador de correcciones es del turno y begin_turn lo reinicia."""
+    conv = _conv()
+    assert conv.turn_invalid_inputs == 0
+    assert conv.register_invalid_input() == 1
+    assert conv.register_invalid_input() == 2
+    assert conv.register_invalid_input() == 3
+    conv.begin_turn()
+    assert conv.turn_invalid_inputs == 0
+
+
 # Soporte de tests: marca de verificación · Art. 3
 def test_conversation_mark_verified_sets_customer() -> None:
     conv = _conv()

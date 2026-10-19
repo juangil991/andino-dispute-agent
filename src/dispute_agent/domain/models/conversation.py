@@ -44,12 +44,19 @@ class Conversation:
     turn_identification: IdentificationStep | None = None
     turn_attempts_remaining: int | None = None
     turn_blocked_tools: list[str] = field(default_factory=list)
+    turn_invalid_inputs: int = 0
 
     def begin_turn(self) -> None:
-        """Pone a cero el rastro de identificación del turno (RN-007-41)."""
+        """Pone a cero el rastro de identificación y el contador de correcciones del turno."""
         self.turn_identification = None
         self.turn_attempts_remaining = None
         self.turn_blocked_tools = []
+        self.turn_invalid_inputs = 0
+
+    def register_invalid_input(self) -> int:
+        """Cuenta una corrección de entrada inválida en el turno y devuelve el total."""
+        self.turn_invalid_inputs += 1
+        return self.turn_invalid_inputs
 
     def record_identification(
         self, step: IdentificationStep, attempts_remaining: int | None = None

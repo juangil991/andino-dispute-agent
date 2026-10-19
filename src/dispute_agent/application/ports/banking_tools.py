@@ -17,12 +17,14 @@ class BankingToolError(Exception):
         message: str,
         retryable: bool,
         existing_dispute_id: str | None = None,
+        field: str | None = None,
     ) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.retryable = retryable
         self.existing_dispute_id = existing_dispute_id
+        self.field = field
 
 
 class BankingToolUnavailableError(Exception):

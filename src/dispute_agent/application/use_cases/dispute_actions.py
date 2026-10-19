@@ -2,6 +2,7 @@
 
 import hashlib
 
+from dispute_agent.application.failure_detail import describe_failure
 from dispute_agent.application.ports.audit_log import AgentAuditEvent, AuditEventType, AuditLogPort
 from dispute_agent.application.ports.banking_tools import (
     BankingToolError,
@@ -101,9 +102,14 @@ class DisputeActions:
                 _dispute_key(tx.transaction_id, reason),
             )
         except BankingToolError as error:
-            self._audit_open(conv, tx, decision, reason, {"error": error.code})
+            failed: dict[str, object] = {"error": error.code}
+            if error.field is not None:
+                failed["field"] = error.field
+            self._audit_open(conv, tx, decision, reason, failed)
             if error.code != _DISPUTE_ALREADY_OPEN:
-                return await self._fail(conv, tx, "iniciar_disputa", error.code, prior_block)
+                return await self._fail(
+                    conv, tx, "iniciar_disputa", error.code, prior_block, error.field
+                )
             dispute_id = error.existing_dispute_id
             outcomes.append(
                 Outcome(
@@ -166,13 +172,15 @@ class DisputeActions:
         tool: str,
         code: str,
         prior_block: bool,
+        field: str | None = None,
     ) -> list[Outcome]:
         """RN-007-21: falla de iniciar_disputa; deriva sin DISPUTE_OPENED y cierra."""
+        detail = describe_failure(tool, code, field)
         outcome = await self._escalation.escalate(
             conv,
             reason=EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE,
             rule=_FAILURE_RULE,
-            note=f"{_FAILURE_RULE}: falla irrecuperable en {tool} ({code})",
+            note=f"{_FAILURE_RULE}: {detail}",
             transaction=tx,
             prior_actions=(PriorAction.CARD_BLOCKED,) if prior_block else (),
         )
@@ -184,7 +192,7 @@ class DisputeActions:
             input={"tool": tool, "code": code},
             output={"status": conv.status.value},
             rule=_FAILURE_RULE,
-            reason=f"falla irrecuperable en {tool} ({code})",
+            reason=detail,
         )
         return [outcome]
 
@@ -215,13 +223,16 @@ class DisputeActions:
     ) -> None:
         """Evento `tool_call` de iniciar_disputa (RN-007-28)."""
         result = "error" if "error" in output else "ok"
+        is_failure = "error" in output and output["error"] != _DISPUTE_ALREADY_OPEN
         self._audit(
             conv,
             "tool_call",
             tool="iniciar_disputa",
             input={"transaction_id": tx.transaction_id, "reason": reason},
             output=output,
-            rule=decision.rule,
+            # RN-010-08: la falla irrecuperable consta con RN-007-21; DISPUTE_ALREADY_OPEN
+            # no es una falla de sistema y conserva la regla de la decisión.
+            rule=_FAILURE_RULE if is_failure else decision.rule,
             reason=f"iniciar_disputa {result} para {tx.transaction_id}",
         )
 

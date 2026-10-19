@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 from tests.fakes.agent_transaction_builder import DisputedTransactionBuilder
+from tests.fakes.banking_errors import invalid_input
 from tests.fakes.conversation_builder import ConversationBuilder
 from tests.fakes.fake_agent_audit_log import FakeAgentAuditLog
 from tests.fakes.fake_banking_tools import FakeBankingTools
@@ -276,6 +277,79 @@ async def test_ac_007_23_dispute_actions__open_dispute_failure(error: Exception)
     assert any(
         e.event_type == "conversation_closed" and e.rule == "RN-007-21" for e in audit.events
     )
+
+
+# Regla: RN-010-08 — la falla irrecuperable por entrada inválida nombra el campo
+# AC-010-10, AC-010-11 · Art. 10
+async def test_ac_010_10_open_dispute__invalid_input_with_field__audits_field_and_still_escalates() -> (  # noqa: E501
+    None
+):
+    """AC-010-10/11: INVALID_INPUT con campo se audita, consta en la nota y deriva y cierra."""
+    tx = _tx()
+    banking = (
+        FakeBankingTools()
+        .respond("open_dispute", invalid_input("transaction_id"))
+        .respond("escalate", _registered())
+    )
+    actions, conv, audit = _setup(banking, tx)
+
+    await actions.evaluate(conv, "TX-L1")
+
+    call = next(e for e in audit.events if e.event_type == "tool_call")
+    assert call.output == {"error": "INVALID_INPUT", "field": "transaction_id"}
+    assert call.rule == "RN-007-21"
+    types = [e.event_type for e in audit.events]
+    assert types.index("tool_call") < types.index("escalation") < types.index("conversation_closed")
+    args = banking.calls[1][1]
+    assert args["reason"] is EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE
+    assert args["note"] == (
+        "RN-007-21: falla irrecuperable en iniciar_disputa (INVALID_INPUT, campo: transaction_id)"
+    )
+    closed = next(e for e in audit.events if e.event_type == "conversation_closed")
+    assert (
+        closed.reason
+        == "falla irrecuperable en iniciar_disputa (INVALID_INPUT, campo: transaction_id)"
+    )
+    assert conv.status is ConversationStatus.ESCALATED
+
+
+# Regla: RN-010-08 — el tool_call de la falla lleva la regla RN-007-21
+# AC-010-10 · Art. 8
+async def test_ac_010_10_open_dispute__timeout__audits_tool_call_with_failure_rule() -> None:
+    """AC-010-10: el tiempo límite se audita con salida UNAVAILABLE y regla RN-007-21."""
+    tx = _tx()
+    banking = (
+        FakeBankingTools()
+        .respond("open_dispute", BankingToolUnavailableError("tiempo límite"))
+        .respond("escalate", _registered())
+    )
+    actions, conv, audit = _setup(banking, tx)
+
+    await actions.evaluate(conv, "TX-L1")
+
+    call = next(e for e in audit.events if e.event_type == "tool_call")
+    assert call.output == {"error": "UNAVAILABLE"}
+    assert call.rule == "RN-007-21"
+
+
+# Regla: RN-010-08 — éxito y DISPUTE_ALREADY_OPEN conservan la regla de la decisión
+# AC-010-10 · Art. 8
+async def test_ac_010_10_open_dispute__success_and_already_open__keeps_decision_rule() -> None:
+    """AC-010-10: solo la falla cambia la regla; éxito y ya abierta usan la de la decisión."""
+    tx = _tx()
+    ok_actions, ok_conv, ok_audit = _setup(
+        FakeBankingTools().respond("open_dispute", _opened(tx)), tx
+    )
+    await ok_actions.evaluate(ok_conv, "TX-L1")
+    error = BankingToolError("DISPUTE_ALREADY_OPEN", "Ya existe: D-OLD.", False, "D-OLD")
+    dup_banking = FakeBankingTools().respond("open_dispute", error)
+    dup_actions, dup_conv, dup_audit = _setup(dup_banking, tx)
+    await dup_actions.evaluate(dup_conv, "TX-L1")
+
+    for audit in (ok_audit, dup_audit):
+        call = next(e for e in audit.events if e.event_type == "tool_call")
+        assert call.rule != "RN-007-21"
+        assert call.rule.startswith("DP-007-")
 
 
 # Regla: DP-007-06 — fraude con transacción disputable: disputa y derivación

@@ -88,3 +88,32 @@ async def test_ac_007_18_mcp_adapter__dispute_already_open__exposes_existing_id(
     assert raised.value.code == "DISPUTE_ALREADY_OPEN"
     assert raised.value.retryable is False
     assert raised.value.existing_dispute_id == first.dispute_id
+
+
+# Regla: RN-010-01 — el core señala el campo inválido en el INVALID_INPUT que se devuelve al LLM.
+# AC-010-12 · Art. 3 (servidor real por stdio: `(campo: date_to)` llega como `field`)
+async def test_ac_010_12_list_transactions__future_date_to__raises_invalid_input_with_field(
+    tmp_path: Path,
+) -> None:
+    """AC-010-12: una fecha `date_to` futura produce INVALID_INPUT con field == 'date_to'."""
+    adapter = McpStdioBankingAdapter(
+        command=sys.executable,
+        args=["-m", "core_banking_mcp.server"],
+        env={
+            **os.environ,
+            "CORE_DATABASE_URL": f"sqlite:///{(tmp_path / 'core.db').as_posix()}",
+        },
+        call_timeout_seconds=20,
+    )
+    await adapter.open()
+    try:
+        await adapter.verify_identity("conv-field", "C-0001", date(1990, 3, 15), date(2008, 4, 20))
+        with pytest.raises(BankingToolError) as raised:
+            await adapter.list_transactions(
+                "conv-field", "1234", date(2026, 1, 1), date(2999, 1, 1)
+            )
+    finally:
+        await adapter.close()
+
+    assert raised.value.code == "INVALID_INPUT"
+    assert raised.value.field == "date_to"

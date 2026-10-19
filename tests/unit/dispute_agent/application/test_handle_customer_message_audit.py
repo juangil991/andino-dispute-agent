@@ -391,6 +391,8 @@ async def test_dispute_actions__open_dispute__audits_tool_call(fails: bool) -> N
     assert event.input["transaction_id"] == "TX-L1"
     assert event.input["reason"] == "UNRECOGNIZED_CHARGE"
     assert event.output == ({"error": "INTERNAL"} if fails else {"dispute_id": "D-0001"})
-    assert event.rule == "DP-007-05"
+    # Regla: RN-010-08 — la falla consta con RN-007-21; el éxito con la regla de la decisión
+    # AC-010-10 · Art. 8
+    assert event.rule == ("RN-007-21" if fails else "DP-007-05")
     assert event.reason
     assert event.at == _NOW
