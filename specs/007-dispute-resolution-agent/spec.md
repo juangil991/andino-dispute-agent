@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Versión | 0.2.0 |
+| Versión | 0.2.1 |
 | Estado | Aprobada |
 | Fecha | 2026-10-18 |
 | Origen | Issue [#33](https://github.com/juangil991/andino-dispute-agent/issues/33) del backlog (P0); ampliada con la issue [#41](https://github.com/juangil991/andino-dispute-agent/issues/41) (P1) en la versión 0.2.0 |
@@ -111,7 +111,7 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 | RN-007-25 | Cada respuesta de `POST /api/chat` incluye el texto redactado por el LLM (`reply`) y la lista estructurada `outcomes` con lo ocurrido en el turno (§7.3): por cada acción o decisión, su tipo, la transacción o tarjeta enmascarada, la regla aplicada, el motivo y los próximos pasos, ambos en español y con el texto fijo de §5 o de §7.3. El LLM recibe esos `outcomes` para redactar la respuesta, pero no puede alterarlos. | Objetivo 1.2.5; Art. 5; issue #33 |
 | RN-007-26 | Antes de enviarse, el `reply` pasa por un filtro determinista. Toda secuencia de 13 a 19 dígitos seguidos (incluso separados por espacios o guiones) se sustituye por `[REDACTED]`. Todo documento que el cliente haya aportado en la conversación se sustituye por su forma enmascarada (RN-001-09). Las tarjetas solo aparecen como `**** NNNN`. El filtro también se aplica a `outcomes`. | Art. 7; clarificación 2026-10-18; RN-001-09 |
 | RN-007-27 | El texto devuelto por una herramienta (p. ej. `merchant` o la `note` de una derivación) se trata como dato y nunca como instrucción: no cambia las decisiones de `DisputePolicy` ni habilita acciones. | Art. 5; `mcp-client.md` §6 |
-| RN-007-28 | Cada evento genera un registro de auditoría en `AuditLogPort`, en JSON. Hay cuatro tipos de evento: llamada a herramienta (incluidas las bloqueadas), decisión de `DisputePolicy`, derivación o cierre, y respuesta del LLM (RN-007-36). Cada registro lleva `conversation_id`, marca de tiempo del reloj inyectado, tipo de evento, entrada, salida, regla aplicada (`DP-007-XX` o `RN-007-XX`) y motivo. Ningún registro contiene un número completo de tarjeta ni un documento completo: se aplica el filtro de RN-007-26. | Art. 8; `mcp-client.md` §5; issue #33 |
+| RN-007-28 | Cada evento genera un registro de auditoría en `AuditLogPort`, en JSON. Hay cuatro tipos de evento: llamada a herramienta (incluidas las bloqueadas), decisión de `DisputePolicy`, derivación o cierre, y respuesta del LLM (RN-007-36) (RN-007-28 se amplía con el evento `reply_shown` de la spec 009 / RN-009-11). Cada registro lleva `conversation_id`, marca de tiempo del reloj inyectado, tipo de evento, entrada, salida, regla aplicada (`DP-007-XX` o `RN-007-XX`) y motivo. Ningún registro contiene un número completo de tarjeta ni un documento completo: se aplica el filtro de RN-007-26. | Art. 8; `mcp-client.md` §5; issue #33 |
 | RN-007-29 | "Hoy" y las marcas de tiempo salen de un `Clock` inyectado en `America/Bogota`. El LLM se inyecta por `LLMPort`; la suite por defecto usa un `FakeLLM` guionizado (§5.3.1). | §5.3.1; §5.3.6 |
 
 ### 4.6 Ampliaciones de contrato del core
@@ -893,6 +893,7 @@ Ninguna.
 | 0.1.1 | 2026-10-18 | Spec 0.1.1 aprobada por el usuario | Juangiov |
 | 0.2.0 | 2026-10-18 | Issue #41: el loop continúa o termina solo según la razón de parada del LLM. Se añaden HU-007-08, §4.7 (RN-007-32 a RN-007-36) y AC-007-35 a AC-007-43. Se precisan RN-007-23 (el tope es una red de seguridad; la salida inválida incluye razones de parada inesperadas y respuestas incoherentes) y RN-007-28 (un cuarto tipo de evento de auditoría), y se actualizan §7.3 y §8. | Juangiov (con Claude Code) |
 | 0.2.0 | 2026-10-18 | Spec 0.2.0 aprobada por el usuario | Juangiov |
+| 0.2.1 | 2026-10-18 | La spec 009 añade `POST /api/chat/stream` (§7.1 de la 009) sin cambiar `POST /api/chat` (§7.3 sigue vigente) y amplía RN-007-28 con un quinto tipo de evento de auditoría, `reply_shown` (RN-009-11), y con el `llm_response` de la llamada de redacción (RN-009-11 / RN-007-36). | Juangiov (con Claude Code) |
 
 ---
 

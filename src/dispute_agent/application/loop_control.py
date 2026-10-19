@@ -7,7 +7,7 @@ Decide solo por la razón de parada y la coherencia de la respuesta
 from dataclasses import dataclass
 from enum import Enum
 
-from dispute_agent.application.ports.llm import LLMResponse
+from dispute_agent.application.ports.llm import LLMResponse, LLMStreamEnd
 
 
 class LoopStep(Enum):
@@ -21,6 +21,21 @@ class LoopVerdict:
     step: LoopStep
     rule: str
     why: str
+
+
+@dataclass(frozen=True)
+class DraftVerdict:
+    """Validez de una redacción en streaming (RN-009-09)."""
+
+    complete: bool
+    cause: str | None = None
+
+
+def classify_draft_end(end: LLMStreamEnd, text: str) -> DraftVerdict:
+    """Completa solo con `end_turn`, sin herramientas y con texto no vacío (RN-009-09 c)."""
+    if end.stop_reason == "end_turn" and not end.tool_calls and text.strip():
+        return DraftVerdict(complete=True)
+    return DraftVerdict(complete=False, cause="LLM_INVALID_OUTPUT")
 
 
 def classify_llm_response(response: LLMResponse) -> LoopVerdict:

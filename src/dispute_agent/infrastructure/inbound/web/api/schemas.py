@@ -37,6 +37,36 @@ class OutcomeOut(BaseModel):
         )
 
 
+class StreamStartOut(BaseModel):
+    """Evento `start` de `POST /api/chat/stream` (spec 009 §7.1)."""
+
+    conversation_id: str
+
+
+class StreamWordOut(BaseModel):
+    """Evento `word`: un fragmento de la respuesta."""
+
+    text: str
+
+
+class StreamEndOut(BaseModel):
+    """Evento final `end`: respuesta completa y estado de la conversación."""
+
+    conversation_id: str
+    reply: str
+    status: Literal["ACTIVE", "ESCALATED"]
+    outcomes: list[OutcomeOut]
+
+
+class StreamInterruptedOut(BaseModel):
+    """Evento final `interrupted`: mismos campos que `end`, `status` siempre ESCALATED."""
+
+    conversation_id: str
+    reply: str
+    status: Literal["ESCALATED"] = "ESCALATED"
+    outcomes: list[OutcomeOut]
+
+
 class ChatResponse(BaseModel):
     conversation_id: str
     reply: str

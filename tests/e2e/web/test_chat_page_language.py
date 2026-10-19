@@ -75,7 +75,7 @@ def _assert_spanish_fixed_texts(page: Page) -> None:
 
 def _hang(page: Page) -> list[Route]:
     held: list[Route] = []
-    page.route("**/api/chat", lambda route, _request: held.append(route))
+    page.route("**/api/chat/stream", lambda route, _request: held.append(route))
     return held
 
 

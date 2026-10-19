@@ -103,6 +103,21 @@ class ChatTurnResult:
 
 
 @dataclass(frozen=True)
+class TurnDecision:
+    """Estado del turno tras el ciclo: sin la respuesta redactada ni guardada.
+
+    `drafted` es `True` si el ciclo terminó en `end_turn` (`text` es el borrador); si no, `text`
+    es un texto fijo. `closed` marca una conversación ya cerrada (RN-007-24): no se guarda nada.
+    """
+
+    conversation: Conversation
+    outcomes: tuple[Outcome, ...]
+    text: str
+    drafted: bool
+    closed: bool = False
+
+
+@dataclass(frozen=True)
 class _SearchArgs:
     document: str | None
     full_name: str | None
@@ -165,18 +180,28 @@ class HandleCustomerMessage:
         self._max_iterations = max_iterations
 
     async def handle(self, conversation_id: str | None, message: str) -> ChatTurnResult:
+        decision = await self.decide_turn(conversation_id, message)
+        return self.complete_turn(decision, decision.text)
+
+    async def decide_turn(self, conversation_id: str | None, message: str) -> TurnDecision:
+        """Carga, cierre previo (RN-007-24), ciclo y fallas; no redacta ni guarda la respuesta.
+
+        `drafted` indica que el ciclo terminó en `end_turn`; si no, `text` es un texto fijo.
+        """
         conv = self._load(conversation_id)
         if conv.status is ConversationStatus.ESCALATED:
             # RN-007-24: cerrada; ni LLM ni herramientas, y la conversación no cambia.
-            return ChatTurnResult(
-                conv.conversation_id, messages.CONVERSATION_CLOSED_MESSAGE, conv.status, ()
+            return TurnDecision(
+                conv, (), messages.CONVERSATION_CLOSED_MESSAGE, drafted=False, closed=True
             )
         conv.history.append(ChatMessage("user", text=message))
         outcomes: list[Outcome] = []
         try:
-            reply = await self._run_loop(conv, outcomes)
+            text = await self._run_loop(conv, outcomes)
+            drafted = True
         except IterationLimitExceeded:
-            reply = await self._fail_turn(
+            drafted = False
+            text = await self.fail_turn(
                 conv,
                 outcomes,
                 EscalationReason.INCONCLUSIVE_RULES,
@@ -185,30 +210,39 @@ class HandleCustomerMessage:
                 _LLM_RULE,
             )
         except (LLMError, LLMOutputError) as error:
-            reply = await self._fail_turn(
+            drafted = False
+            text = await self.fail_turn(
                 conv,
                 outcomes,
-                EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE,
-                OutcomeKind.LLM_FAILURE,
-                "falla o salida inválida del LLM",
-                error.rule if isinstance(error, LLMOutputError) else _LLM_RULE,
+                rule=error.rule if isinstance(error, LLMOutputError) else _LLM_RULE,
             )
+        return TurnDecision(conv, tuple(outcomes), text, drafted=drafted)
+
+    def complete_turn(self, decision: TurnDecision, reply: str) -> ChatTurnResult:
+        """Filtra (RN-007-26), registra en el historial, guarda y limpia los `outcomes`."""
+        conv = decision.conversation
+        if decision.closed:
+            return ChatTurnResult(conv.conversation_id, reply, conv.status, ())
         reply = redact_reply(reply, conv.provided_documents)
         conv.history.append(ChatMessage("assistant", text=reply))
         self._repo.save(conv)
-        cleaned = tuple(_clean_outcome(conv, outcome) for outcome in outcomes)
+        cleaned = tuple(clean_outcome(conv, outcome) for outcome in decision.outcomes)
         return ChatTurnResult(conv.conversation_id, reply, conv.status, cleaned)
 
-    async def _fail_turn(
+    async def fail_turn(
         self,
         conv: Conversation,
         outcomes: list[Outcome],
-        reason: EscalationReason,
-        kind: OutcomeKind,
-        why: str,
-        rule: str,
+        reason: EscalationReason = EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE,
+        kind: OutcomeKind = OutcomeKind.LLM_FAILURE,
+        why: str = "falla o salida inválida del LLM",
+        rule: str = _LLM_RULE,
+        note: str | None = None,
     ) -> str:
-        """RN-007-23/34/35: deriva, cierra y responde con el texto fijo, sin llamar al LLM."""
+        """RN-007-23/34/35: deriva, cierra y responde con el texto fijo, sin llamar al LLM.
+
+        `note` (opcional) sustituye la nota de la derivación; sin ella se usa la habitual.
+        """
         failure = Outcome(
             kind=kind,
             rule=rule,
@@ -219,7 +253,7 @@ class HandleCustomerMessage:
             # Ya derivada en este turno: no se duplica la derivación.
             outcomes.append(failure)
         else:
-            escalated = await self._escalation.escalate(conv, reason, rule)
+            escalated = await self._escalation.escalate(conv, reason, rule, note=note)
             self._close(conv, "llm", rule, why)
             if escalated.kind is OutcomeKind.ESCALATION_FAILED:
                 outcomes.extend([failure, escalated])
@@ -774,7 +808,7 @@ def _clean(conv: Conversation, text: str | None) -> str | None:
     return None if text is None else redact_reply(text, conv.provided_documents)
 
 
-def _clean_outcome(conv: Conversation, outcome: Outcome) -> Outcome:
+def clean_outcome(conv: Conversation, outcome: Outcome) -> Outcome:
     """Aplica el filtro de RN-007-26 a todos los textos del outcome."""
     return replace(
         outcome,
@@ -790,7 +824,7 @@ def _clean_outcome(conv: Conversation, outcome: Outcome) -> Outcome:
 def _outcomes_payload(
     conv: Conversation, outcomes: Sequence[Outcome]
 ) -> list[dict[str, str | None]]:
-    return [_outcome_dict(_clean_outcome(conv, outcome)) for outcome in outcomes]
+    return [_outcome_dict(clean_outcome(conv, outcome)) for outcome in outcomes]
 
 
 def _empty_page_kind(page: TransactionPage) -> OutcomeKind | None:

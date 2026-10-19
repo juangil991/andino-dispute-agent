@@ -5,6 +5,7 @@ petición y permite retener una respuesta hasta ``release()``.
 """
 
 import json
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,49 @@ class _Scripted:
     delay_ms: int
     hold: bool
     abort: bool
+
+
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _words(reply: str) -> list[str]:
+    """Trocea ``reply`` en palabras con su espacio previo; la unión es exactamente ``reply``."""
+    tokens = re.findall(r"\s*\S+", reply)
+    rest = reply[len("".join(tokens)) :]
+    if rest:
+        if tokens:
+            tokens[-1] += rest
+        else:
+            tokens = [rest]
+    return tokens
+
+
+def _to_sse(body: Any) -> str:
+    """Cuerpo SSE completo para un JSON válido; si no es válido, lo devuelve tal cual."""
+    if isinstance(body, str):
+        return body
+    if not (
+        isinstance(body, dict)
+        and isinstance(body.get("reply"), str)
+        and isinstance(body.get("status"), str)
+    ):
+        return json.dumps(body)
+    conversation_id = body.get("conversation_id")
+    parts = [_sse("start", {"conversation_id": conversation_id})]
+    parts.extend(_sse("word", {"text": word}) for word in _words(body["reply"]))
+    parts.append(
+        _sse(
+            "end",
+            {
+                "conversation_id": conversation_id,
+                "reply": body["reply"],
+                "status": body["status"],
+                "outcomes": body.get("outcomes", []),
+            },
+        )
+    )
+    return "".join(parts)
 
 
 class ChatApiScript:
@@ -52,8 +96,13 @@ class ChatApiScript:
 
     def install(self, page: Page) -> None:
         page.route("**/api/chat", self._handle)
+        page.route("**/api/chat/stream", self._handle_stream)
 
-    def _handle(self, route: Route, request: Request) -> None:
+    def _handle_stream(self, route: Route, request: Request) -> None:
+        """Traduce la respuesta JSON guionizada a SSE (spec 009 §7.1) en un cuerpo completo."""
+        self._handle(route, request, stream=True)
+
+    def _handle(self, route: Route, request: Request, stream: bool = False) -> None:
         raw = request.post_data
         self.requests.append(
             RecordedRequest(
@@ -71,6 +120,13 @@ class ChatApiScript:
             threading.Event().wait(item.delay_ms / 1000)
         if item.abort:
             route.abort("failed")
+            return
+        if stream and item.status == 200:
+            route.fulfill(
+                status=200,
+                content_type="text/event-stream",
+                body=_to_sse(item.body),
+            )
             return
         route.fulfill(
             status=item.status,

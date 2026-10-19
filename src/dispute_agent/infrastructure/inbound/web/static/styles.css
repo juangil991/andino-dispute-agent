@@ -39,18 +39,42 @@ h1 {
   flex: 0 0 auto;
 }
 
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 3rem;
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #d3d9e2;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
 .conversation {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   flex: 1 1 auto;
-  min-height: 3rem;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0.5rem;
-  background: #fff;
-  border: 1px solid #d3d9e2;
-  border-radius: 0.5rem;
+}
+
+/* Borrador de la respuesta que va llegando: debajo del último mensaje, en el mismo panel. */
+.draft {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  max-height: 60%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0.5rem 0.5rem;
+}
+
+.draft:empty {
+  display: none;
 }
 
 .message {
@@ -129,7 +153,13 @@ button[hidden],
   color: #b3261e;
 }
 
-.message-unsent-mark {
+.message-unsent-mark,
+.message-incomplete-mark {
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.message-incomplete-mark {
+  color: #8a5a00;
+  font-style: italic;
 }

@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `008-chat-web-page` |
-| Versión | 0.1.0 |
+| Versión | 0.2.1 |
 | Estado | Aprobada |
 | Fecha | 2026-10-18 |
 | Origen | Issue [#34](https://github.com/juangil991/andino-dispute-agent/issues/34) del backlog (P1) |
@@ -17,11 +17,11 @@
 
 La spec 007 construyó el agente de disputas y lo expuso en `POST /api/chat` (spec 007 §7.3), pero solo como API JSON: un cliente de Banco Andino no tiene dónde escribirle. La constitución fija el front como HTML + CSS con JavaScript vanilla mínimo, servido por FastAPI como estáticos (§2, §3.1, §3.6).
 
-Esta feature entrega esa página de chat. La página es un **cliente delgado**: envía lo que el cliente escribe a `POST /api/chat` y muestra lo que el agente responde. No consulta datos de la cuenta, no decide y no ejecuta acciones por su cuenta: las decisiones son de `DisputePolicy` (Art. 5) y toda acción sobre el core pasa por el agente y MCP (Art. 6). También debe proteger al cliente en el navegador: mostrar todo como texto (sin ejecutar código inyectado), no guardar la conversación en el navegador y no deshacer el enmascarado de los datos (Art. 7). Debe ser usable en celular, solo con teclado y con lector de pantalla, y estar en español (objetivo 1.2.5).
+Esta feature entrega esa página de chat. La página es un **cliente delgado**: envía lo que el cliente escribe a `POST /api/chat/stream` (spec 009 §7.1; la respuesta llega como flujo de eventos) y muestra lo que el agente responde. No consulta datos de la cuenta, no decide y no ejecuta acciones por su cuenta: las decisiones son de `DisputePolicy` (Art. 5) y toda acción sobre el core pasa por el agente y MCP (Art. 6). También debe proteger al cliente en el navegador: mostrar todo como texto (sin ejecutar código inyectado), no guardar la conversación en el navegador y no deshacer el enmascarado de los datos (Art. 7). Debe ser usable en celular, solo con teclado y con lector de pantalla, y estar en español (objetivo 1.2.5).
 
 ## 2. Objetivos
 
-- Servir desde `dispute_agent` una página de chat en español que converse con el agente mediante el contrato existente de `POST /api/chat`, sin cambiarlo.
+- Servir desde `dispute_agent` una página de chat en español que converse con el agente mediante `POST /api/chat/stream` (spec 009 §7.1). `POST /api/chat` sigue existiendo sin cambios.
 - Mostrar los mensajes en orden, indicar cuándo el agente está respondiendo y evitar envíos vacíos, duplicados o simultáneos.
 - Mostrar todo el texto (del cliente y del agente) como texto plano, sin interpretarlo como HTML.
 - No conservar la conversación en el navegador: recargar o reabrir la página empieza una conversación nueva.
@@ -31,7 +31,7 @@ Esta feature entrega esa página de chat. La página es un **cliente delgado**: 
 
 ### Fuera de alcance
 
-- Cambios en `POST /api/chat`, en el caso de uso del agente o en el servidor MCP (contrato de la spec 007 §7.3 sin cambios).
+- Cambios en `POST /api/chat`, en el caso de uso del agente o en el servidor MCP (contrato de la spec 007 §7.3 sin cambios). La página usa `POST /api/chat/stream` (spec 009); `POST /api/chat` sigue existiendo sin cambios.
 - Mostrar la lista estructurada `outcomes`: la página solo muestra `reply` (clarificación 2026-10-18).
 - Autenticación de usuarios de la página, sesiones o cookies.
 - Persistir o recuperar conversaciones entre recargas o visitas.
@@ -56,7 +56,7 @@ Esta feature entrega esa página de chat. La página es un **cliente delgado**: 
 
 | ID | Regla | Fuente / justificación |
 |---|---|---|
-| RN-008-01 | La página solo se comunica con el agente mediante `POST /api/chat` (spec 007 §7.3), sin cambios en su contrato. No llama a otros endpoints del agente ni a herramientas MCP. No muestra controles para abrir disputas, bloquear tarjetas, derivar casos ni consultar transacciones: toda acción ocurre por lo que el agente decide en la conversación. | Art. 5; Art. 6; issue #34 |
+| RN-008-01 | La página solo se comunica con el agente mediante `POST /api/chat/stream` (spec 009 §7.1), en lugar de `POST /api/chat`. No llama a otros endpoints del agente ni a herramientas MCP. No muestra controles para abrir disputas, bloquear tarjetas, derivar casos ni consultar transacciones: toda acción ocurre por lo que el agente decide en la conversación. | Art. 5; Art. 6; issue #34; spec 009 (RN-009-13) |
 | RN-008-02 | El agente sirve la página en `GET /`, con sus recursos estáticos (HTML, CSS, JS), desde la misma aplicación `dispute_agent`. | §2; §3.6 |
 
 ### 4.2 Inicio y envío de mensajes
@@ -85,13 +85,13 @@ Esta feature entrega esa página de chat. La página es un **cliente delgado**: 
 |---|---|---|
 | RN-008-13 | Si una respuesta trae `status = "ESCALATED"`, la página muestra el `reply` y, debajo, el aviso fijo de derivación de §7.2. A partir de ahí la caja de texto y `Enviar` quedan deshabilitados y aparece el botón `Iniciar una conversación nueva`. | Issue #34; RN-007-24 |
 | RN-008-14 | Al pulsar `Iniciar una conversación nueva`, la página borra los mensajes mostrados, olvida el `conversation_id`, muestra solo el saludo, habilita la caja de texto y le pasa el foco. El siguiente mensaje se envía sin `conversation_id`. | Issue #34 |
-| RN-008-15 | Si `POST /api/chat` responde `404` (la conversación ya no existe), la página muestra el aviso fijo de conversación no disponible de §7.2 y se cierra igual que en RN-008-13: deshabilita la caja y ofrece `Iniciar una conversación nueva`. No reintenta ni reenvía el mensaje. | Clarificación 2026-10-18 |
+| RN-008-15 | Si `POST /api/chat/stream` responde `404` (la conversación ya no existe), la página muestra el aviso fijo de conversación no disponible de §7.2 y se cierra igual que en RN-008-13: deshabilita la caja y ofrece `Iniciar una conversación nueva`. No reintenta ni reenvía el mensaje. | Clarificación 2026-10-18 |
 
 ### 4.5 Fallas, demoras y conexión
 
 | ID | Regla | Fuente / justificación |
 |---|---|---|
-| RN-008-16 | Si el envío falla, la página muestra **uno** de los avisos fijos de §7.2, sin código HTTP, trazas, texto de excepción ni nombres internos. El mensaje de la cliente sigue visible, marcado como no enviado, y aparece el botón `Reintentar`. Los casos son: (a) **sin conexión**: el navegador está sin conexión o la petición no llega al servidor; (b) **demora**: no hay respuesta en **60 segundos**, y la página deja de esperarla; (c) **servicio no disponible**: respuesta `5xx`, `422`, otro código distinto de `200` y `404`, o un `200` cuyo cuerpo no es JSON o no trae `reply` y `status` válidos. | Issue #34; clarificaciones 2026-10-18 |
+| RN-008-16 | Si el envío falla, la página muestra **uno** de los avisos fijos de §7.2, sin código HTTP, trazas, texto de excepción ni nombres internos. El mensaje de la cliente sigue visible, marcado como no enviado, y aparece el botón `Reintentar`. Los casos son: (a) **sin conexión**: el navegador está sin conexión o la petición no llega al servidor; (b) **demora**: pasan **60 segundos sin recibir una palabra nueva** (contados desde el envío y reiniciados con cada palabra; spec 009 RN-009-22), y la página deja de esperar; (c) **servicio no disponible**: respuesta `5xx`, `422`, otro código distinto de `200` y `404`, o un `200` cuyo cuerpo no es JSON o no trae `reply` y `status` válidos. | Issue #34; clarificaciones 2026-10-18; spec 009 (RN-009-22) |
 | RN-008-17 | `Reintentar` vuelve a enviar el **mismo** texto a la **misma** conversación (el mismo `conversation_id`, o ninguno si era el primer mensaje), sin añadir otra burbuja con el mensaje. Mientras el reintento está en curso aplica RN-008-07. Si tiene éxito, el aviso desaparece, el mensaje deja de estar marcado y la respuesta aparece debajo. Si el primer envío sí llegó al agente, este puede procesarlo dos veces; se acepta ese riesgo (el core ya evita disputas y bloqueos duplicados: RN-007-12, RN-007-16). | Clarificación 2026-10-18 |
 | RN-008-18 | Mientras hay un aviso de falla con `Reintentar`, la caja de texto no envía mensajes nuevos: la cliente reintenta el pendiente antes de escribir otro. | Issue #34 (conservar el orden) |
 
@@ -113,7 +113,7 @@ No aplica: la página no toma decisiones sobre disputas (Art. 5, RN-008-01).
 Estas condiciones aplican a todos los criterios, salvo que se indique otra cosa:
 
 - La página se carga en `GET /` desde la aplicación `dispute_agent`, en un navegador real (Chromium) dirigido por los tests (clarificación 2026-10-18).
-- Las respuestas de `POST /api/chat` están **guionizadas**: el test fija para cada petición el código HTTP, el cuerpo y la demora. Ningún criterio llama a Claude ni al servidor MCP.
+- Las respuestas de `POST /api/chat/stream` están **guionizadas** (el arnés traduce la respuesta JSON guionizada a eventos; spec 009): el test fija para cada petición el código HTTP, el cuerpo y la demora. Ningún criterio llama a Claude ni al servidor MCP.
 - "El agente responde X" significa un `200` con `{"conversation_id": "conv-1", "reply": X, "status": "ACTIVE", "outcomes": []}`, salvo que se indique otro `status`.
 - "Los mensajes de la conversación" son las burbujas visibles, en orden, con su autor (`Agente` o `Tú`) y su texto.
 - La pantalla es de escritorio (1280 × 800), salvo en AC-008-21.
@@ -125,7 +125,7 @@ Cubre: HU-008-01, RN-008-03, RN-008-11
 - **Given** la cliente abre la página
 - **When** la página termina de cargar
 - **Then** el único mensaje de la conversación es del `Agente` con el saludo fijo de §7.2
-- **And** no se hizo ninguna petición a `POST /api/chat`
+- **And** no se hizo ninguna petición a `POST /api/chat/stream`
 - **And** la caja de texto está habilitada, vacía y acepta texto
 
 ### AC-008-02 — Enviar mensajes y ver las respuestas en orden
@@ -136,7 +136,7 @@ Cubre: HU-008-01, RN-008-01, RN-008-03, RN-008-08
 - **When** la cliente escribe `No reconozco un cobro de mi tarjeta` y lo envía, el agente responde `Con gusto te ayudo. ¿Me indicas tu número de documento?`, luego escribe `D-1001` y el agente responde `Gracias. ¿Cuál es tu fecha de nacimiento?`
 - **Then** los mensajes de la conversación son, en este orden: saludo (`Agente`), `No reconozco un cobro de mi tarjeta` (`Tú`), primera respuesta (`Agente`), `D-1001` (`Tú`), segunda respuesta (`Agente`)
 - **And** la primera petición fue `{"message": "No reconozco un cobro de mi tarjeta"}` sin `conversation_id`, y la segunda `{"conversation_id": "conv-1", "message": "D-1001"}`
-- **And** todas las peticiones de la página al agente fueron a `POST /api/chat`
+- **And** todas las peticiones de la página al agente fueron a `POST /api/chat/stream`
 
 ### AC-008-03 — No se envían mensajes vacíos
 
@@ -144,7 +144,7 @@ Cubre: HU-008-01, RN-008-04
 
 - **Given** la página está cargada
 - **When** la cliente intenta enviar un mensaje `<mensaje>`, con Enter y con `Enviar`
-- **Then** no se hace ninguna petición a `POST /api/chat`
+- **Then** no se hace ninguna petición a `POST /api/chat/stream`
 - **And** los mensajes de la conversación no cambian
 
 | mensaje |
@@ -185,7 +185,7 @@ Cubre: HU-008-01, RN-008-07
 
 - **Given** la cliente escribió `No reconozco un cobro`
 - **When** `<acción>` muy rápido
-- **Then** se hace **una** sola petición a `POST /api/chat`
+- **Then** se hace **una** sola petición a `POST /api/chat/stream`
 - **And** `No reconozco un cobro` aparece **una** sola vez en la conversación
 
 | acción |
@@ -241,7 +241,7 @@ Cubre: HU-008-07, RN-008-01
 - **When** la cliente revisa la página
 - **Then** los únicos controles de la página son la caja de texto y `Enviar`
 - **And** ningún control ni enlace menciona disputas, bloqueos, analistas ni transacciones
-- **And** todas las peticiones hechas por la página al agente fueron a `POST /api/chat`
+- **And** todas las peticiones hechas por la página al agente fueron a `POST /api/chat/stream`
 
 ### AC-008-11 — Los datos se muestran tal como los entrega el agente
 
@@ -298,7 +298,7 @@ Cubre: HU-008-04, RN-008-14
 
 Cubre: HU-008-02, RN-008-16, RN-008-17
 
-- **Given** la cliente envió `No reconozco un cobro` y `POST /api/chat` responde `<respuesta>`
+- **Given** la cliente envió `No reconozco un cobro` y `POST /api/chat/stream` responde `<respuesta>`
 - **When** la respuesta llega
 - **Then** la página muestra el aviso fijo de servicio no disponible de §7.2
 - **And** el texto visible no contiene el código HTTP, `Error`, `Exception`, `Traceback` ni el cuerpo de la respuesta
@@ -353,7 +353,7 @@ Cubre: HU-008-02, RN-008-10, RN-008-13
 Cubre: HU-008-04, RN-008-15
 
 - **Given** la cliente conversó con el agente (`conv-1`)
-- **When** envía `hola` y `POST /api/chat` responde `404`
+- **When** envía `hola` y `POST /api/chat/stream` responde `404`
 - **Then** la página muestra el aviso fijo de conversación no disponible de §7.2, sin el código `404`
 - **And** la caja de texto y `Enviar` están deshabilitados, se muestra `Iniciar una conversación nueva` y no aparece `Reintentar`
 - **And** no se hace ninguna otra petición
@@ -422,14 +422,14 @@ No aplica: esta feature no crea ni modifica herramientas MCP.
 
 ### 7.1 Interfaz HTTP usada por la página
 
-No es una herramienta MCP. La página consume `POST /api/chat` **sin cambios** respecto de la spec 007 §7.3 y solo lee de la respuesta `conversation_id`, `reply` y `status`. Se añade:
+No es una herramienta MCP. La página consume `POST /api/chat/stream` (spec 009 §7.1; la respuesta llega como flujo de eventos) y solo lee `conversation_id`, el fragmento de `word`, `reply` y `status`. `POST /api/chat` sigue vigente sin cambios (spec 007 §7.3). Se añade:
 
 | Ruta | Método | Respuesta |
 |---|---|---|
 | `/` | `GET` | `200`, `text/html`: la página de chat (RN-008-02). |
 | Recursos estáticos de la página | `GET` | `200` con el tipo de contenido de cada archivo (CSS, JS). |
 
-Cómo trata la página cada respuesta de `POST /api/chat`:
+Cómo trata la página cada respuesta de `POST /api/chat/stream`. El comportamiento por evento (`start`, `word`, `end`, `interrupted`) y por fallo del flujo está en spec 009 §7.1; `end` equivale a la antigua respuesta `200`:
 
 | Respuesta | Comportamiento |
 |---|---|
@@ -437,7 +437,7 @@ Cómo trata la página cada respuesta de `POST /api/chat`:
 | `200` con `reply` y `status = "ESCALATED"` | Muestra `reply` y cierra la conversación (RN-008-13). |
 | `404` | Aviso de conversación no disponible y cierre (RN-008-15). |
 | Sin conexión o sin respuesta del servidor | Aviso de sin conexión y `Reintentar` (RN-008-16 a). |
-| Sin respuesta en 60 s | Aviso de demora y `Reintentar` (RN-008-16 b). |
+| 60 s sin recibir una palabra nueva | Aviso de demora y `Reintentar` (RN-008-16 b). |
 | Cualquier otra (`5xx`, `422`, otro código, `200` sin JSON válido o sin `reply`/`status` válidos) | Aviso de servicio no disponible y `Reintentar` (RN-008-16 c). |
 
 ### 7.2 Textos fijos de la página
@@ -452,6 +452,7 @@ Cómo trata la página cada respuesta de `POST /api/chat`:
 | Contador (quedan ≤ 200) | `Quedan N caracteres` |
 | Autor de los mensajes (texto accesible) | `Tú` / `Agente` |
 | Marca de mensaje no enviado | `No enviado` |
+| Marca de respuesta incompleta | `Incompleto` (spec 009 §7.2) |
 | Aviso de derivación | `Tu caso fue derivado a un analista. Una persona continuará la atención.` |
 | Aviso de conversación no disponible | `Esta conversación ya no está disponible.` |
 | Botón de conversación nueva | `Iniciar una conversación nueva` |
@@ -487,6 +488,8 @@ Ninguna.
 |---|---|---|---|
 | 0.1.0 | 2026-10-18 | Versión inicial a partir de la issue #34 | Juangiov (con Claude Code) |
 | 0.1.0 | 2026-10-18 | Spec aprobada por el usuario | Juangiov |
+| 0.2.0 | 2026-10-18 | Enmienda por spec 009, aprobada por el usuario con la spec 009: RN-008-01 y §7.1 (la página usa `POST /api/chat/stream`), RN-008-16 b (60 s sin recibir una palabra nueva, RN-009-22), §7.2 (marca `Incompleto`) y condiciones generales de §6. Sin cambios en los AC. | Juangiov (con Claude Code) |
+| 0.2.1 | 2026-10-18 | Alineada la URL de la página (`POST /api/chat/stream`, spec 009) en RN-008-15 y en los AC-008-01, -02, -03, -06, -10, -16 y -20; sin cambios de comportamiento | Juangiov (con Claude Code) |
 
 ---
 

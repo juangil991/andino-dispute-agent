@@ -1,5 +1,8 @@
 """Adaptador del LLMPort sobre la Messages API de Anthropic."""
 
+import json
+from collections.abc import AsyncIterator
+
 import httpx
 from anthropic import AsyncAnthropic
 
@@ -7,6 +10,8 @@ from dispute_agent.application.ports.llm import (
     ChatMessage,
     LLMError,
     LLMResponse,
+    LLMStreamEnd,
+    LLMTextDelta,
     ToolCall,
     ToolSpec,
 )
@@ -30,6 +35,38 @@ def _serialize_message(message: ChatMessage) -> dict[str, object]:
             block["is_error"] = True
         content.append(block)
     return {"role": message.role, "content": content}
+
+
+def _flatten_for_drafting(messages: tuple[ChatMessage, ...]) -> list[dict[str, object]]:
+    """Aplana el historial a texto: la API rechaza tool_use/tool_result sin `tools`.
+
+    Fusiona mensajes consecutivos del mismo rol (alternancia exigida por la API).
+    """
+    calls: dict[str, ToolCall] = {}
+    flattened: list[dict[str, object]] = []
+    for message in messages:
+        parts: list[str] = []
+        if message.text:
+            parts.append(message.text)
+        for call in message.tool_calls:
+            calls[call.id] = call
+            parts.append(
+                f"[herramienta {call.name} {json.dumps(call.arguments, ensure_ascii=False)}]"
+            )
+        for result in message.tool_results:
+            origin = calls.get(result.tool_call_id)
+            name = origin.name if origin else "desconocida"
+            args = json.dumps(origin.arguments if origin else {}, ensure_ascii=False)
+            error = " (error)" if result.is_error else ""
+            parts.append(f"[resultado {name} {args}{error}] {result.content}")
+        if not parts:
+            continue
+        text = "\n".join(parts)
+        if flattened and flattened[-1]["role"] == message.role:
+            flattened[-1]["content"] = f"{flattened[-1]['content']}\n{text}"
+        else:
+            flattened.append({"role": message.role, "content": text})
+    return flattened
 
 
 class AnthropicLLMAdapter:
@@ -81,3 +118,33 @@ class AnthropicLLMAdapter:
             raise LLMError(
                 f"Falló la llamada al proveedor del LLM ({type(exc).__name__})."
             ) from None
+
+    async def stream(
+        self,
+        system: str,
+        messages: tuple[ChatMessage, ...],
+    ) -> AsyncIterator[LLMTextDelta | LLMStreamEnd]:
+        try:
+            async with self._client.messages.stream(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=system,
+                messages=_flatten_for_drafting(messages),  # type: ignore[arg-type]
+            ) as stream:
+                async for text in stream.text_stream:
+                    if text:
+                        yield LLMTextDelta(text)
+                final = await stream.get_final_message()
+            if final.stop_reason is None:
+                raise ConnectionError("flujo cortado")  # SSE sin message_delta/message_stop
+            calls: list[ToolCall] = []
+            for block in final.content:
+                if block.type == "tool_use":
+                    arguments = block.input if isinstance(block.input, dict) else {}
+                    calls.append(ToolCall(block.id, block.name, dict(arguments)))
+            end = LLMStreamEnd(final.stop_reason, tuple(calls))
+        except Exception as exc:
+            raise LLMError(
+                f"Falló la llamada al proveedor del LLM ({type(exc).__name__})."
+            ) from None
+        yield end
