@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
+from tests.fakes.chat_stream_script import ChatStreamScript
 from tests.fakes.fake_banking_tools import FakeBankingTools
 from tests.fakes.fake_llm import FakeLLM
 from tests.fakes.fixed_agent_clock import FixedAgentClock
@@ -40,15 +41,30 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="session")
-def live_server_url() -> Iterator[str]:
+def _stream_script_session() -> ChatStreamScript:
     app = create_app(
         AgentSettings(_env_file=None),  # type: ignore[call-arg]
         banking=FakeBankingTools(),
         llm=FakeLLM([]),
         clock=FixedAgentClock(),
     )
+    return ChatStreamScript(app)
+
+
+@pytest.fixture
+def chat_stream_script(_stream_script_session: ChatStreamScript) -> Iterator[ChatStreamScript]:
+    """Guion de /api/chat/stream del servidor en vivo, limpio por prueba."""
+    _stream_script_session.reset()
+    yield _stream_script_session
+    _stream_script_session.reset()
+
+
+@pytest.fixture(scope="session")
+def live_server_url(_stream_script_session: ChatStreamScript) -> Iterator[str]:
     port = _free_port()
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(
+        uvicorn.Config(_stream_script_session, host="127.0.0.1", port=port, log_level="warning")
+    )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 15

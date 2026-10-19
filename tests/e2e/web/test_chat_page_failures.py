@@ -119,9 +119,9 @@ def test_ac_008_17_chat_page__offline__notice_keeps_messages_and_retries(
 
 
 def _hang_requests(page: Page) -> list[Route]:
-    """Deja colgadas las peticiones a /api/chat sin bloquear el hilo de Playwright."""
+    """Deja colgadas las peticiones a /api/chat/stream sin bloquear el hilo de Playwright."""
     held: list[Route] = []
-    page.route("**/api/chat", lambda route, _request: held.append(route))
+    page.route("**/api/chat/stream", lambda route, _request: held.append(route))
     return held
 
 
@@ -136,7 +136,13 @@ def _wait_for_requests(page: Page, held: list[Route], count: int) -> None:
 
 def _fulfill(route: Route, body: dict[str, Any]) -> None:
     with contextlib.suppress(Exception):  # la petición abortada ya no admite respuesta
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+        end = json.dumps({"outcomes": [], **body}, ensure_ascii=False)
+        start = 'event: start\ndata: {"conversation_id": "conv-1"}\n\n'
+        route.fulfill(
+            status=200,
+            content_type="text/event-stream",
+            body=start + f"event: end\ndata: {end}\n\n",
+        )
 
 
 # Regla: RN-008-16 (b) — a los 60 s sin respuesta se corta la espera y se descarta la tardía

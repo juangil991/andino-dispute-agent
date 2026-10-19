@@ -14,6 +14,7 @@ class AgentSettings(BaseSettings):
     llm_max_iterations: int = 8
     usd_cop_rate: Decimal = Decimal(4000)
     mcp_call_timeout_seconds: float = 10
+    llm_stream_idle_timeout_seconds: float = 30
     # Misma variable que lee el core: se pasa tal cual al subproceso MCP.
     core_database_url: str = Field(
         default="sqlite:///./data/core_banking.db",

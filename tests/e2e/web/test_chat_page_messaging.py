@@ -16,12 +16,12 @@ def _send(page: Page, text: str) -> None:
 
 
 # Regla: RN-008-08 — la conversación conserva el orden en que se escribieron los mensajes.
-# Regla: RN-008-01 — todas las peticiones al agente van a `POST /api/chat`.
+# Regla: RN-008-01 — las peticiones al agente van a `POST /api/chat/stream` (RN-009-13).
 # AC-008-02 · Art. 7 (identificación antes que información)
 def test_ac_008_02_chat_page__two_turns__ordered_and_conversation_id_reused(
     page: Page, live_server_url: str
 ) -> None:
-    """AC-008-02: orden de mensajes, peticiones sin y con `conversation_id`, solo POST /api/chat."""
+    """AC-008-02: orden, peticiones sin y con `conversation_id`, solo POST /api/chat/stream."""
     first = "Con gusto te ayudo. ¿Me indicas tu número de documento?"
     second = "Gracias. ¿Cuál es tu fecha de nacimiento?"
     script = ChatApiScript().enqueue(body=_reply(first)).enqueue(body=_reply(second))
@@ -45,7 +45,7 @@ def test_ac_008_02_chat_page__two_turns__ordered_and_conversation_id_reused(
         {"conversation_id": "conv-1", "message": "D-1001"},
     ]
     assert [(r.method, r.url.removeprefix(live_server_url)) for r in api_calls] == [
-        ("POST", "/api/chat")
+        ("POST", "/api/chat/stream")
     ] * 2
 
 
@@ -66,7 +66,7 @@ def test_ac_008_10_chat_page__after_turn__only_textbox_and_send_controls(
     expect(page.locator("[data-author='agent']")).to_have_count(2)
 
     assert [(r.method, r.url.removeprefix(live_server_url)) for r in api_calls] == [
-        ("POST", "/api/chat")
+        ("POST", "/api/chat/stream")
     ]
     controls = page.locator("button, a, input, textarea, select, [role='button'], [role='link']")
     visible = [c for c in controls.all() if c.is_visible()]

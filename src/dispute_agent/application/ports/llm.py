@@ -1,5 +1,6 @@
 """Puerto del LLM: contrato mínimo y DTOs de mensajes y herramientas."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -54,6 +55,21 @@ class LLMResponse:
     stop_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class LLMTextDelta:
+    """Trozo de texto emitido por el LLM durante el streaming."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class LLMStreamEnd:
+    """Fin del streaming: razón de parada y llamadas a herramientas pedidas."""
+
+    stop_reason: str | None
+    tool_calls: tuple[ToolCall, ...] = field(default=())
+
+
 class LLMPort(Protocol):
     async def complete(
         self,
@@ -61,3 +77,9 @@ class LLMPort(Protocol):
         messages: tuple[ChatMessage, ...],
         tools: tuple[ToolSpec, ...],
     ) -> LLMResponse: ...
+
+    def stream(
+        self,
+        system: str,
+        messages: tuple[ChatMessage, ...],
+    ) -> AsyncIterator[LLMTextDelta | LLMStreamEnd]: ...

@@ -5,7 +5,13 @@ import os
 import pytest
 
 from dispute_agent.application.agent_tools import LLM_TOOLS
-from dispute_agent.application.ports.llm import ChatMessage, ToolCall, ToolResult
+from dispute_agent.application.ports.llm import (
+    ChatMessage,
+    LLMStreamEnd,
+    LLMTextDelta,
+    ToolCall,
+    ToolResult,
+)
 from dispute_agent.application.system_prompt import SYSTEM_PROMPT
 from dispute_agent.infrastructure.outbound.llm.anthropic_llm_adapter import (
     AnthropicLLMAdapter,
@@ -100,3 +106,27 @@ async def test_ac_007_29_live__spanish_reply__mentions_reason_and_next_steps() -
     # Español: algún término funcional en español y sin marcadores típicos del inglés.
     assert any(w in text for w in (" tu ", " la ", " el ", " de ", " que "))
     assert not any(w in text for w in (" the ", " your ", " dispute "))
+
+
+# Regla: RN-009-03 — La redacción es una llamada al LLM sin herramientas, con el historial
+# aplanado del turno, que se transmite en tiempo real y termina con `end_turn`.
+# AC-009-01 · Art. 5
+async def test_anthropic_llm_live__drafting_stream__yields_deltas_and_end_turn() -> None:
+    """AC-009-01: con Claude real, la redacción llega en trozos y termina con end_turn."""
+    outcomes = (
+        '{"outcomes": [{"kind": "DISPUTE_OPENED", "rule": "DP-007-05",'
+        ' "transaction_id": "TX-0001", "masked_card": "**** 4321", "reference": "D-0001"}]}'
+    )
+    history = (
+        ChatMessage("user", "No reconozco un cobro de mi tarjeta, ¿qué hicieron?"),
+        ChatMessage(
+            "assistant",
+            tool_calls=(ToolCall("toolu_1", "iniciar_disputa", {"transaction_id": "TX-0001"}),),
+        ),
+        ChatMessage("user", tool_results=(ToolResult("toolu_1", outcomes),)),
+    )
+    items = [i async for i in _adapter().stream(SYSTEM_PROMPT, history)]
+    deltas = [i for i in items if isinstance(i, LLMTextDelta)]
+    assert deltas
+    assert isinstance(items[-1], LLMStreamEnd)
+    assert items[-1].stop_reason == "end_turn"

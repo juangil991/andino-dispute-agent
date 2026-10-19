@@ -34,6 +34,7 @@ _ENV_NAMES = (
     "LLM_MAX_ITERATIONS",
     "USD_COP_RATE",
     "MCP_CALL_TIMEOUT_SECONDS",
+    "LLM_STREAM_IDLE_TIMEOUT_SECONDS",
     "CORE_DATABASE_URL",
     "CORE_SEED_ON_START",
 )
@@ -162,3 +163,14 @@ def test_agent_settings__env_set__values_loaded_and_key_hidden(
 def test_create_app__without_key_or_injections__builds_app() -> None:
     app = create_app(_settings())
     assert "/api/chat" in app.openapi()["paths"]
+
+
+# Regla: RN-009-09 — la espera máxima sin texto es configurable (30 s por defecto).
+# AC-009-10 · Art. 10
+def test_agent_settings__stream_idle_timeout__defaults_to_30_and_reads_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-009-10: el timeout de inactividad vale 30 y se lee de su variable de entorno."""
+    assert _settings().llm_stream_idle_timeout_seconds == 30
+    monkeypatch.setenv("LLM_STREAM_IDLE_TIMEOUT_SECONDS", "5.5")
+    assert _settings().llm_stream_idle_timeout_seconds == 5.5
