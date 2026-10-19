@@ -96,7 +96,9 @@ LLM_TOOLS: tuple[ToolSpec, ...] = (
         name="evaluar_disputa",
         description=(
             "Comunica que el cliente quiere disputar una transacción concreta. La "
-            "aplicación evalúa si procede y ejecuta la acción; tú no decides."
+            "aplicación evalúa si procede y ejecuta la acción; tú no decides. El identificador "
+            "debe haber aparecido antes en el resultado de consultar_transacciones; si el "
+            "cliente te lo da, consulta primero."
         ),
         input_schema=_object(
             {

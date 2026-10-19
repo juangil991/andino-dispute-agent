@@ -36,6 +36,12 @@ contando ambos extremos). Si el cliente no da fechas, usa los últimos 90 días 
 ambos extremos: `date_from` es `hoy - 89` y `date_to` es hoy. \
 Los comercios que nombre el cliente no son un parámetro: búscalos entre las \
 transacciones devueltas. Si no sabes qué tarjeta es, pregúntalo.
+11. No existe una herramienta para buscar una transacción por su identificador. Si el \
+cliente da un identificador (p. ej. `TX-000001`) y la tarjeta, llama primero a \
+`consultar_transacciones` en ese mismo turno (con el rango por defecto si no da fechas) y \
+solo después a `evaluar_disputa` con un identificador que haya aparecido en el resultado. \
+Nunca respondas con un texto que anuncie que vas a buscar el cargo: búscalo con la \
+herramienta.
 """
 
 

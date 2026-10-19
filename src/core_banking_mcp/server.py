@@ -27,6 +27,7 @@ from core_banking_mcp.infrastructure.outbound.clock.system_clock import SystemCl
 from core_banking_mcp.infrastructure.outbound.persistence.database import (
     create_engine_from_url,
     create_schema,
+    reset_schema,
     session_factory,
 )
 from core_banking_mcp.infrastructure.outbound.persistence.seeds.customers import seed_database
@@ -63,7 +64,11 @@ def build_server(settings: CoreSettings | None = None) -> FastMCP:
     settings = settings or CoreSettings()
     _ensure_sqlite_directory(settings.database_url)
     engine = create_engine_from_url(settings.database_url)
-    create_schema(engine)
+    # Con siembra la base es de demo: se regenera siempre (create_all no migra esquemas viejos).
+    if settings.seed_on_start:
+        reset_schema(engine)
+    else:
+        create_schema(engine)
     session = session_factory(engine)()
     repository = SqlAlchemyCustomerRepository(session)
     if settings.seed_on_start:

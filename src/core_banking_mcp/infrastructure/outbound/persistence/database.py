@@ -20,3 +20,9 @@ def session_factory(engine: Engine) -> sessionmaker[Session]:
 
 def create_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+
+
+def reset_schema(engine: Engine) -> None:
+    """Recrea el esquema desde cero: `create_all` no altera tablas de una versión anterior."""
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)

@@ -879,7 +879,8 @@ class HandleCustomerMessage:
                     "result": "transaction_not_listed",
                     "message": (
                         "Esa transacción no está entre las consultadas; "
-                        "usa consultar_transacciones."
+                        "llama ahora a consultar_transacciones con la tarjeta del cliente "
+                        "(rango por defecto: hoy - 89 a hoy) y vuelve a evaluar."
                     ),
                 },
             )

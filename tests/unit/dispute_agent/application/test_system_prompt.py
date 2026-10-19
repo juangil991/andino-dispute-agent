@@ -33,3 +33,8 @@ def test_ac_011_01_decision_prompt__states_89_day_limit_and_default_date_from() 
     assert "`date_from` es `hoy - 89`" in prompt
     assert "`date_to` es hoy" in prompt
     assert "últimos 90 días" not in prompt.replace("últimos 90 días contando ambos extremos", "")
+
+
+def test_prompt_pide_consultar_antes_de_evaluar_un_id_de_transaccion() -> None:
+    assert "No existe una herramienta para buscar una transacción" in SYSTEM_PROMPT
+    assert "solo después a `evaluar_disputa`" in SYSTEM_PROMPT
