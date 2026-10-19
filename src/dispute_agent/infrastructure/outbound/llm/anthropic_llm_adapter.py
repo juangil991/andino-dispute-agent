@@ -7,6 +7,8 @@ import httpx
 from anthropic import AsyncAnthropic
 
 from dispute_agent.application.ports.llm import (
+    INTERNAL_DATA_CLOSE,
+    INTERNAL_DATA_OPEN,
     ChatMessage,
     LLMError,
     LLMResponse,
@@ -50,15 +52,20 @@ def _flatten_for_drafting(messages: tuple[ChatMessage, ...]) -> list[dict[str, o
             parts.append(message.text)
         for call in message.tool_calls:
             calls[call.id] = call
+            arguments = json.dumps(call.arguments, ensure_ascii=False)
             parts.append(
-                f"[herramienta {call.name} {json.dumps(call.arguments, ensure_ascii=False)}]"
+                f"{INTERNAL_DATA_OPEN}Consulta realizada: {call.name} {arguments}"
+                f"{INTERNAL_DATA_CLOSE}"
             )
         for result in message.tool_results:
             origin = calls.get(result.tool_call_id)
             name = origin.name if origin else "desconocida"
             args = json.dumps(origin.arguments if origin else {}, ensure_ascii=False)
             error = " (error)" if result.is_error else ""
-            parts.append(f"[resultado {name} {args}{error}] {result.content}")
+            parts.append(
+                f"{INTERNAL_DATA_OPEN}Resultado de {name} {args}{error}: "
+                f"{result.content}{INTERNAL_DATA_CLOSE}"
+            )
         if not parts:
             continue
         text = "\n".join(parts)

@@ -5,9 +5,10 @@ import pytest
 from dispute_agent.application.loop_control import (
     LoopStep,
     LoopVerdict,
+    classify_draft_end,
     classify_llm_response,
 )
-from dispute_agent.application.ports.llm import LLMResponse, ToolCall
+from dispute_agent.application.ports.llm import LLMResponse, LLMStreamEnd, ToolCall
 
 _CALL = ToolCall(id="call-1", name="consultar_transacciones", arguments={})
 
@@ -90,3 +91,21 @@ def test_ac_007_36_loop_control__end_turn_with_text__reply() -> None:
 
     assert verdict.step is LoopStep.REPLY
     assert verdict.rule == "RN-007-32"
+
+
+# Regla: RN-009-09 — una redacción con marcas del registro interno es salida inválida.
+# AC-009-31 · Art. 10 (ante salida inválida del LLM, escalar)
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[herramienta buscar_transacciones {"card": "**** 4321"}]',
+        "<datos_internos>x</datos_internos>",
+    ],
+    ids=["bracket_tool_call", "internal_data_tag"],
+)
+def test_classify_draft_end__internal_markup_in_text__invalid(text: str) -> None:
+    """Borde: end_turn con texto, pero con marcas internas ⇒ LLM_INVALID_OUTPUT."""
+    verdict = classify_draft_end(LLMStreamEnd("end_turn", ()), f"Voy a consultar. {text}")
+
+    assert not verdict.complete
+    assert verdict.cause == "LLM_INVALID_OUTPUT"

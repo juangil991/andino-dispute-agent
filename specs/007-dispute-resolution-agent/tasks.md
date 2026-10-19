@@ -3,8 +3,8 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Spec | [spec.md](./spec.md) — versión 0.3.2 (T-007-01…29 implementaron la 0.1.x; T-007-30…37, la 0.2.0, issue #41; T-007-38…48, la 0.3.x, issue #45) |
-| Plan | [plan.md](./plan.md) — versión 0.3.0 (§1.1 para T-007-30…37; §1.2 para T-007-38…47) |
+| Spec | [spec.md](./spec.md) — versión 0.3.3 (T-007-49 implementa la enmienda 0.3.3; T-007-01…29 implementaron la 0.1.x; T-007-30…37, la 0.2.0, issue #41; T-007-38…48, la 0.3.x, issue #45) |
+| Plan | [plan.md](./plan.md) — versión 0.3.1 (§1.1 para T-007-30…37; §1.2 para T-007-38…47; §1.3 para T-007-49) |
 | Fecha | 2026-10-19 |
 
 **Estados:** `[ ]` pendiente · `[~]` en curso · `[x]` terminada
@@ -1074,6 +1074,17 @@ La auditoría de la spec 0.3.1 dio **No cumple** (3 Bloqueantes, 7 Mayores, 0 Me
 
 Filas DP: DP-007-01…07 en `test_dispute_policy__each_decision_table_row` (T-007-06). Casos de escalamiento de spec §8: DP-007-02/03/04 (T-007-06, T-007-11), fraude (T-007-12, T-007-15), persona (T-007-15), identidad (T-007-14), falla de herramienta (T-007-11, T-007-12, T-007-15), límite y falla del LLM (T-007-15; en 0.2.0, razón de parada inesperada y respuesta incoherente o vacía: T-007-31, T-007-33), falla de `escalar_a_analista` (T-007-10, T-007-15). En 0.3.0: persona o fraude sin identificar (T-007-41), falla de `buscar_cliente` y `verificar_identidad` (T-007-41, T-007-46), verificación agotada y cliente no localizada con su texto de cierre (T-007-42, T-007-43).
 
+### [x] T-007-49 — Fecha actual y regla de consultar en el mismo turno en el prompt de decisión (spec 0.3.3)
+
+- **Cubre:** AC-007-58 (RN-007-44); tarea ya implementada, spec y plan sincronizados con el código.
+- **App / capa:** `dispute_agent` / `application`
+- **Depende de:** T-007-48
+- **Archivos:** `src/dispute_agent/application/system_prompt.py`, `src/dispute_agent/application/use_cases/handle_customer_message.py`, `tests/unit/dispute_agent/application/test_handle_customer_message.py`, `tests/unit/dispute_agent/application/test_drafting_prompt.py`
+- **Test primero:** `test_handle_customer_message.py::test_ac_007_58_handle_message__decision_prompt__has_today_and_same_turn_rule`
+- **Red:** el ciclo enviaba la constante `SYSTEM_PROMPT` sin fecha ni la regla 10; el LLM no podía armar el rango de `consultar_transacciones` y cerraba el turno con un texto que anunciaba la consulta.
+- **Green:** `build_decision_system(today)` y la regla 10 del `SYSTEM_PROMPT`; `_run_loop` usa `Clock.today()`. Test adicional `test_drafting_prompt.py::test_build_decision_system__includes_today`.
+- **Refactor:** —
+
 ---
 
 ## Cierre de la feature
@@ -1101,3 +1112,9 @@ Definition of Done según constitución §5.5:
 - [x] Lint, formato y tipado sin errores.
 - [x] Spec actualizada al comportamiento implementado (spec 0.3.1; spec 009 0.2.0).
 - [ ] Sin secretos ni datos reales.
+
+### Cierre de la versión 0.3.3 (sincronización con el código)
+
+- [x] AC-007-58 trazado a tests en verde (`ruff check`, `ruff format`, `mypy --strict` y `pytest` sin errores).
+- [x] Spec actualizada al comportamiento implementado (spec 0.3.3; plan 0.3.1, que sigue Aprobado).
+- [x] Sin secretos ni datos reales.

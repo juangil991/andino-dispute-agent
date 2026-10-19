@@ -126,6 +126,7 @@ def _sse_response(body: bytes) -> httpx.Response:
 # Regla: RN-009-03 — La redacción es una llamada al LLM sin herramientas, con el historial
 # del turno, que se transmite en tiempo real; su razón de parada decide si es completa.
 # AC-009-01 · Art. 5 (el dominio decide; el LLM solo redacta)
+# AC-009-31 · Art. 5 (historial aplanado en bloques `<datos_internos>`, sin `[herramienta`)
 async def test_stream__flattened_history_without_tools__yields_deltas_and_stop_reason() -> None:
     """AC-009-01: sin tools, historial aplanado a texto, deltas y LLMStreamEnd con stop_reason."""
     captured: list[dict[str, object]] = []
@@ -161,8 +162,16 @@ async def test_stream__flattened_history_without_tools__yields_deltas_and_stop_r
     assert [m["role"] for m in messages] == ["user", "assistant", "user"]
     assert "tool_use" not in json.dumps(messages)
     assert "tool_result" not in json.dumps(messages)
-    assert messages[1]["content"] == 'Busco.\n[herramienta buscar_cliente {"document": "123"}]'
-    assert messages[2]["content"] == ('[resultado buscar_cliente {"document": "123"}] {"ok": true}')
+    assert messages[1]["content"] == (
+        'Busco.\n<datos_internos>Consulta realizada: buscar_cliente {"document": "123"}'
+        "</datos_internos>"
+    )
+    assert messages[2]["content"] == (
+        '<datos_internos>Resultado de buscar_cliente {"document": "123"}: {"ok": true}'
+        "</datos_internos>"
+    )
+    assert "[herramienta" not in json.dumps(messages)
+    assert "[resultado" not in json.dumps(messages)
     assert items == [
         LLMTextDelta("Tu "),
         LLMTextDelta("disputa "),

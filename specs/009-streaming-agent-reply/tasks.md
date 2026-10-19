@@ -3,8 +3,8 @@
 | Campo | Valor |
 |---|---|
 | Feature | `009-streaming-agent-reply` |
-| Spec | [spec.md](./spec.md) — versión 0.1.1 |
-| Plan | [plan.md](./plan.md) — versión 0.1.0 |
+| Spec | [spec.md](./spec.md) — versión 0.2.1 (T-009-31 implementa la enmienda 0.2.1) |
+| Plan | [plan.md](./plan.md) — versión 0.1.1 |
 | Fecha | 2026-10-18 |
 
 **Estados:** `[ ]` pendiente · `[~]` en curso · `[x]` terminada
@@ -398,6 +398,17 @@ Desviaciones a constar en el informe de cierre:
 | AC-009-29 | T-009-22 | `test_chat_page__reload_or_new_conversation_mid_stream__leaves_no_residual_words`, `test_chat_page__words_arrive_after_end__are_ignored` |
 | AC-009-30 | T-009-18 | `test_chat_page__no_verified_identity__shows_no_account_data` |
 
+### [x] T-009-31 — Historial `<datos_internos>`, prompt de redacción y guarda de salida (spec 0.2.1)
+
+- **Cubre:** AC-009-31 (RN-009-03, RN-009-09); tarea ya implementada, spec y plan sincronizados con el código.
+- **App / capa:** `dispute_agent` / `application` + `infrastructure/outbound`
+- **Depende de:** T-009-13
+- **Archivos:** `src/dispute_agent/application/ports/llm.py`, `src/dispute_agent/application/loop_control.py`, `src/dispute_agent/application/system_prompt.py`, `src/dispute_agent/infrastructure/outbound/llm/anthropic_llm_adapter.py`, `tests/integration/dispute_agent/llm/test_anthropic_stream_adapter.py`, `tests/unit/dispute_agent/application/test_loop_control.py`, `tests/unit/dispute_agent/application/test_drafting_prompt.py`, `tests/unit/dispute_agent/application/test_stream_customer_message_interruptions.py`
+- **Test primero:** `test_stream_customer_message_interruptions.py::test_ac_009_31_draft_with_internal_markup_escalates`
+- **Red:** con el clasificador anterior, un `end_turn` con texto `Consulto. [herramienta …]` se completaba y el cliente veía la llamada; el aplanado producía `[herramienta …]`/`[resultado …]`, que el modelo imitaba.
+- **Green:** `_flatten_for_drafting` vuelca llamadas y resultados en bloques `<datos_internos>`; `INTERNAL_MARKERS` en `ports/llm.py`; `classify_draft_end` rechaza el texto con esas marcas (`LLM_INVALID_OUTPUT`); `REPLY_DRAFTING_PROMPT` regla 5. Se actualizaron las aserciones de `test_stream__flattened_history_without_tools__yields_deltas_and_stop_reason` y se añadió `test_classify_draft_end__internal_markup_in_text__invalid` (2 filas) y `test_drafting_prompt__forbids_tool_call_text`.
+- **Refactor:** —
+
 ---
 
 ## Cierre de la feature
@@ -408,4 +419,10 @@ Definition of Done según constitución §5.5:
 - [x] Umbrales de cobertura cumplidos (total 97,12 %; `domain` + `application` de ambas apps ≥ 95 %).
 - [x] Lint, formato y tipado sin errores.
 - [x] Spec actualizada al comportamiento implementado (spec 009 en 0.1.1; specs 007 en 0.2.1 y 008 en 0.2.1).
+- [x] Sin secretos ni datos reales.
+
+### Cierre de la versión 0.2.1 (sincronización con el código)
+
+- [x] AC-009-31 trazado a tests en verde (`ruff check`, `ruff format`, `mypy --strict` y `pytest` sin errores).
+- [x] Spec actualizada al comportamiento implementado (spec 0.2.1; plan 0.1.1, que sigue Aprobado).
 - [x] Sin secretos ni datos reales.

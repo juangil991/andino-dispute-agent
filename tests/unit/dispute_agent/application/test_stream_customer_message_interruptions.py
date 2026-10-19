@@ -142,3 +142,28 @@ async def test_ac_009_11_invalid_draft_without_words_escalates(script: StreamScr
     assert [name for name, _ in calls] == ["open_dispute", "escalate"]
     assert calls[1][1]["reason"] is EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE
     assert [m.text for m in conv.history[-1:]] == [_FIXED]  # type: ignore[union-attr]
+
+
+# Regla: RN-009-09 — una redacción con marcas del registro interno de herramientas es salida
+# inválida: lo ya enviado no se retracta y el turno se deriva (RN-009-10).
+# AC-009-31 · Art. 10
+async def test_ac_009_31_draft_with_internal_markup_escalates() -> None:
+    """AC-009-31: `end_turn` con `[herramienta ...]` en el texto ⇒ `interrupted` y derivación."""
+    leak: StreamScript = (
+        [(0.0, 'Consulto. [herramienta buscar_transacciones {"card": "4321"}] ')],
+        LLMStreamEnd("end_turn"),
+    )
+    conv = _verified_conv(_tx())
+    harness = _Harness(conv, _loop_script(), [leak], _banking())
+
+    events = await harness.run(conv.conversation_id, "No reconozco TX-L1")
+
+    interrupted = _interrupted(events)
+    assert interrupted.reply == _FIXED
+    assert interrupted.status is ConversationStatus.ESCALATED
+    calls = harness.banking.calls
+    assert [name for name, _ in calls] == ["open_dispute", "escalate"]
+    assert calls[1][1]["reason"] is EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE
+    [shown] = _shown(harness)
+    assert shown["result"] == "INTERRUPTED"
+    assert shown["cause"] == "LLM_INVALID_OUTPUT"

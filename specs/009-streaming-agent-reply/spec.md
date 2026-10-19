@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `009-streaming-agent-reply` |
-| Versión | 0.2.0 |
+| Versión | 0.2.1 |
 | Estado | Aprobada |
 | Fecha | 2026-10-18 |
 | Origen | Issue [#42](https://github.com/juangil991/andino-dispute-agent/issues/42) del backlog (P2) |
@@ -63,7 +63,7 @@ Esta spec amplía, sin romper sus contratos:
 |---|---|---|
 | RN-009-01 | El agente expone `POST /api/chat/stream` (§7.1), con la misma entrada y las mismas validaciones que `POST /api/chat` (spec 007 §7.3). Responde `422` o `404` como error HTTP antes de transmitir nada. Si la entrada es válida, responde `200` con un flujo de eventos. `POST /api/chat` no cambia. Ambos endpoints comparten las conversaciones. | Clarificación 2026-10-18; spec 007 §7.3 |
 | RN-009-02 | En `POST /api/chat/stream`, el agente emite el evento `start` con el `conversation_id` y ejecuta el turno igual que en la spec 007 (guardas, `DisputePolicy`, herramientas MCP, derivaciones, cierre y auditoría, RN-007-01 a RN-007-36), **sin enviar texto a la cliente**. El texto de la respuesta `end_turn` del ciclo no se envía: lo sustituye la llamada de redacción (RN-009-03). | Art. 5; issue #42; clarificación 2026-10-18 |
-| RN-009-03 | Si el ciclo termina con una respuesta `end_turn` válida (RN-007-32), el agente hace **exactamente una** llamada de redacción al LLM, y solo cuando todas las decisiones, acciones y registros de auditoría del turno ya terminaron. La llamada recibe el historial de la conversación y los `outcomes` del turno, **no ofrece ninguna herramienta** y sus instrucciones piden redactar la respuesta en español a partir de los `outcomes`, sin afirmar acciones que no figuren en ellos. No cuenta en el máximo de 8 llamadas de RN-007-23. | Clarificación 2026-10-18; Art. 5; RN-007-33 |
+| RN-009-03 | Si el ciclo termina con una respuesta `end_turn` válida (RN-007-32), el agente hace **exactamente una** llamada de redacción al LLM, y solo cuando todas las decisiones, acciones y registros de auditoría del turno ya terminaron. La llamada recibe el historial de la conversación y los `outcomes` del turno, **no ofrece ninguna herramienta** y sus instrucciones piden redactar la respuesta en español a partir de los `outcomes`, sin afirmar acciones que no figuren en ellos. Las llamadas y los resultados de herramientas del historial llegan como bloques `<datos_internos>…</datos_internos>`, que son registros del sistema, no texto del agente. Las instrucciones prohíben escribir o imitar esos bloques, llamadas o nombres de herramientas y corchetes de registro, prometer consultas futuras, y piden al cliente los datos que falten. No cuenta en el máximo de 8 llamadas de RN-007-23. | Clarificación 2026-10-18; Art. 5; RN-007-33 |
 | RN-009-04 | Cuando la spec 007 fija el `reply` como texto fijo, no hay llamada de redacción: el agente envía el texto completo en el evento `end`, sin eventos `word`. Son los casos de `ITERATION_LIMIT` y `LLM_FAILURE` del ciclo (spec 007 §7.3), el de conversación ya cerrada (RN-007-24) y, desde la spec 007 v0.3.0, todo turno que termina sin identidad verificada (RN-007-38, textos fijos de 007 §7.4). | Spec 007 §7.3 y §7.4; issue #42; issue #45 |
 | RN-009-05 | El texto de la llamada de redacción nunca se interpreta para ejecutar acciones ni para darlas por hechas (RN-007-33). Ninguna acción del turno se ejecuta, cambia ni se deshace por lo que diga ese texto, ni completo ni parcial. | Art. 5; RN-007-33; issue #42 |
 
@@ -79,7 +79,7 @@ Esta spec amplía, sin romper sus contratos:
 
 | ID | Regla | Fuente / justificación |
 |---|---|---|
-| RN-009-09 | La redacción termina **completa** solo si el LLM responde con razón de parada `end_turn`, sin peticiones de herramientas y con texto que no es vacío ni solo espacios. Se **interrumpe** si: (a) el LLM lanza un error (`LLM_ERROR`); (b) pasan **30 s** (configurable) sin texto nuevo del LLM, contados desde el inicio de la llamada o desde el último texto recibido (`LLM_TIMEOUT`); (c) la salida es inválida: otra razón de parada (`max_tokens`, `refusal`, `pause_turn`, `stop_sequence`, otra o ninguna), alguna petición de herramienta, o texto vacío (`LLM_INVALID_OUTPUT`, como RN-007-34/35); (d) el agente sufre una falla interna inesperada durante la redacción (`INTERNAL_ERROR`). | Art. 10; RN-007-34; RN-007-35; clarificaciones 2026-10-18 |
+| RN-009-09 | La redacción termina **completa** solo si el LLM responde con razón de parada `end_turn`, sin peticiones de herramientas y con texto que no es vacío ni solo espacios. Se **interrumpe** si: (a) el LLM lanza un error (`LLM_ERROR`); (b) pasan **30 s** (configurable) sin texto nuevo del LLM, contados desde el inicio de la llamada o desde el último texto recibido (`LLM_TIMEOUT`); (c) la salida es inválida: otra razón de parada (`max_tokens`, `refusal`, `pause_turn`, `stop_sequence`, otra o ninguna), alguna petición de herramienta, texto vacío, o texto que contiene marcas del registro interno de herramientas (`<datos_internos`, `</datos_internos`, `[herramienta`, `[resultado`) (`LLM_INVALID_OUTPUT`, como RN-007-34/35). Las palabras ya enviadas antes de detectarlo no se retractan (RN-009-10); (d) el agente sufre una falla interna inesperada durante la redacción (`INTERNAL_ERROR`). | Art. 10; RN-007-34; RN-007-35; clarificaciones 2026-10-18 |
 | RN-009-10 | Ante una interrupción de RN-009-09, el agente deja de enviar palabras (no retracta las ya enviadas) y no ejecuta ninguna acción nueva por el texto. Deriva **una vez** con `escalar_a_analista` y `reason = "UNRECOVERABLE_SYSTEM_FAILURE"`, con resumen completo sin transacción si la identidad está verificada, o limitado si no (spec 007 §8). Emite el evento `interrupted` con `reply` igual al mensaje fijo de `LLM_FAILURE` (`Tuvimos un problema al procesar tu solicitud. Una persona continuará la atención.`), `status = "ESCALATED"` y `outcomes` con los del turno más `LLM_FAILURE` (regla `RN-009-10`). Cierra la conversación (RN-007-24). Si la derivación falla, se aplica RN-007-22. | Art. 10; issue #42; RN-007-24 |
 | RN-009-11 | Al terminar cada redacción, completa o interrumpida, queda un registro de auditoría de un quinto tipo de evento (amplía RN-007-28): **respuesta mostrada**. Lleva `conversation_id`, la marca de tiempo del reloj inyectado, el resultado (`COMPLETE` o `INTERRUPTED`), la causa si se interrumpió (`LLM_ERROR`, `LLM_TIMEOUT`, `LLM_INVALID_OUTPUT`, `INTERNAL_ERROR`, `CLIENT_DISCONNECTED`), el texto enviado a la cliente (la concatenación de los fragmentos, ya filtrada) y el `kind` y la `rule` de cada `outcome` del turno, para que un revisor compare lo afirmado con lo realizado. La llamada de redacción también genera su registro de respuesta del LLM (RN-007-36), con la regla `RN-009-03` si es completa o `RN-009-09` si no. Ningún registro contiene datos sin enmascarar (RN-007-26). | Art. 8; clarificación 2026-10-18; issue #42 |
 | RN-009-12 | Si la conexión con la página se cierra antes del evento final, el agente deja de redactar y no llama más al LLM en ese turno. Registra la respuesta mostrada como `INTERRUPTED` con causa `CLIENT_DISCONNECTED`. No deriva ni cierra la conversación: las decisiones del turno ya se tomaron y la cliente puede reintentar (RN-008-17). | Art. 8; RN-008-17 |
@@ -482,6 +482,20 @@ Cubre: RN-009-13, RN-009-26, RN-008-11
 - **Then** la página muestra solo el saludo, el mensaje de la cliente y esa respuesta, sin transacciones, tarjetas ni datos personales
 - **And** la única petición fue a `POST /api/chat/stream`
 
+### AC-009-31 — La redacción no deja pasar el registro interno de herramientas
+
+Cubre: HU-009-04, RN-009-03, RN-009-09, RN-009-10
+
+- **Given** el ciclo termina con `end_turn` y el historial contiene llamadas y resultados de herramientas
+- **When** la llamada de redacción `<respuesta>`
+- **Then** el historial que recibe el LLM no contiene `[herramienta` ni `[resultado`, y sus llamadas y resultados de herramientas viajan dentro de bloques `<datos_internos>`
+- **And** si el texto de la respuesta contiene marcas del registro interno, la redacción es inválida: se emite `interrupted` con el mensaje fijo de `LLM_FAILURE`, `status = "ESCALATED"`, se deriva con `UNRECOVERABLE_SYSTEM_FAILURE` y las palabras ya enviadas no se retractan
+
+| respuesta |
+|---|
+| termina con `end_turn` y texto `Consulto. [herramienta buscar_transacciones {"card": "4321"}]` |
+| termina con `end_turn` y texto con un bloque `<datos_internos>…</datos_internos>` |
+
 ## 7. Contratos de herramientas MCP
 
 No aplica: la feature no crea ni modifica herramientas MCP.
@@ -552,6 +566,7 @@ La desconexión de la página (RN-009-12) **no** deriva. Las derivaciones del ci
 | 2026-10-18 | ¿Cómo se interpreta «el servicio de consulta falla de forma no recuperable», si la redacción no consulta el core? | Como una falla interna del agente durante la redacción, con el mismo tratamiento que las fallas del LLM. | RN-009-09 (d), AC-009-09 |
 | 2026-10-18 | ¿La llamada de redacción cuenta en el máximo de 8 llamadas de RN-007-23? | No. Siempre es una llamada adicional cuando el ciclo termina con `end_turn`. Si el ciclo deriva por límite o falla, no hay redacción. | RN-009-03, RN-009-04, AC-009-07 |
 | 2026-10-18 | (v0.1.1, auditoría de AC) ¿La página debe exigir `outcomes` en los eventos `end` e `interrupted`, o basta con `reply` y `status`? | Basta con `conversation_id`, `reply` y `status`: la página no usa `outcomes` (RN-009-13), así que no lo valida y su ausencia no invalida el evento. El servidor lo sigue enviando siempre. | §7.1, RN-009-23, AC-009-29 |
+| 2026-10-19 | (v0.2.1, sincronización con el código) El chat mostraba `[herramienta buscar_transacciones …]` al cliente: ¿cómo se evita? | El historial de la redacción no usa un formato imitable (`<datos_internos>`), las instrucciones prohíben imitarlo y un texto con esas marcas es salida inválida. Se deriva (no se reintenta) porque las palabras ya se transmiten. | RN-009-03, RN-009-09, AC-009-31 |
 
 ## 10. Preguntas abiertas
 
@@ -565,6 +580,7 @@ Ninguna.
 | 0.1.0 | 2026-10-18 | Spec aprobada por el usuario | Juangiov |
 | 0.1.1 | 2026-10-18 | Enmienda PATCH tras la auditoría de AC (decisión del usuario): §7.1 aclara que la página no valida `outcomes`; AC-009-26 incorpora RN-009-24 en `Cubre:`. Sin cambio de comportamiento ni del plan. | Juangiov (con Claude Code) |
 | 0.2.0 | 2026-10-19 | Alineación con la spec 007 v0.3.0 (issue #45): RN-009-04 incluye los turnos que terminan sin identidad verificada (texto fijo, sin redacción) y AC-009-14 espera `REMINDER_LOCATE` en `end`, sin `word`. Aprobada por el usuario junto con la 007 v0.3.0. | Juangiov (con Claude Code) |
+| 0.2.1 | 2026-10-19 | Enmienda PATCH por sincronización con el código (decisión del usuario): RN-009-03 y RN-009-09 recogen el formato `<datos_internos>` del historial, las instrucciones de redacción y el rechazo de textos con marcas del registro interno; se añade AC-009-31. | Juangiov (con Claude Code) |
 
 ---
 

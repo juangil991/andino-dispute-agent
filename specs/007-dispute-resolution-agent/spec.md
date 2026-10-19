@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Versión | 0.3.2 |
+| Versión | 0.3.3 |
 | Estado | Aprobada |
 | Fecha | 2026-10-19 |
 | Origen | Issue [#33](https://github.com/juangil991/andino-dispute-agent/issues/33) del backlog (P0); ampliada con la issue [#41](https://github.com/juangil991/andino-dispute-agent/issues/41) (P1) en la versión 0.2.0 y con la issue [#45](https://github.com/juangil991/andino-dispute-agent/issues/45) (P0) en la versión 0.3.0 |
@@ -134,6 +134,7 @@ Para aplicar las reglas, el core debe exponer dos datos que hoy no da: el país 
 | RN-007-34 | Una razón de parada distinta de `tool_use` y `end_turn` es una salida inválida. Esto incluye `max_tokens` (respuesta cortada por límite de longitud), `refusal` (rechazo), `pause_turn` (pausa sin terminar), `stop_sequence`, cualquier otro valor y la ausencia de razón. El agente no ejecuta **ninguna** de las herramientas pedidas en esa respuesta, ni siquiera las que llegaron completas, y aplica RN-007-23 como falla del LLM: deriva con `UNRECOVERABLE_SYSTEM_FAILURE`, responde con el mensaje fijo de `LLM_FAILURE` y cierra la conversación. | Issue #41; Art. 10; `agent-behavior.md` §1 |
 | RN-007-35 | Una respuesta con una razón de parada válida pero incoherente o vacía también es una salida inválida, con el mismo tratamiento de RN-007-34. Son tres casos: `tool_use` sin ninguna petición de herramienta, `end_turn` con peticiones de herramientas (que no se ejecutan), y `end_turn` sin texto o solo con espacios. | Issue #41; clarificación 2026-10-18 (v0.2.0); Art. 10 |
 | RN-007-36 | Por cada respuesta del LLM queda un registro de auditoría de tipo respuesta del LLM (RN-007-28). Lleva el número de la llamada en el turno, la razón de parada recibida, la decisión del agente (`CONTINUE`, `REPLY` o `ESCALATE`), el número y los nombres de las herramientas pedidas, y la regla aplicada: `RN-007-32` al continuar o responder, `RN-007-34` o `RN-007-35` ante una salida inválida y `RN-007-23` al superar el límite. No incluye el texto del LLM ni los argumentos de las herramientas, que se auditan en sus propios eventos (RN-007-28). | Issue #41; Art. 8; clarificación 2026-10-18 (v0.2.0) |
+| RN-007-44 | El prompt de cada llamada del ciclo de decisión incluye la fecha actual del reloj inyectado (`Fecha actual: AAAA-MM-DD`) y pide, con la cliente verificada que menciona cargos, llamar a `consultar_transacciones` en ese mismo turno en vez de cerrarlo con un texto que anuncie la consulta; sin fechas dadas, usar los últimos 90 días hasta la fecha actual; los comercios que nombre la cliente no son parámetro de la consulta; si no se sabe la tarjeta, preguntarla. Es una instrucción al LLM: el ciclo sigue decidiendo solo por la razón de parada (RN-007-32) y el texto no se interpreta (RN-007-33). | Chat sin transacciones tras verificar; RN-007-32; RN-007-33; clarificación 2026-10-19 (v0.3.3) |
 
 ### 4.8 Atención antes de verificar la identidad (versión 0.3.0)
 
@@ -972,6 +973,15 @@ Cubre: RN-007-38
 - **When** escribe `hola` a `POST /api/chat/stream` y el guion del LLM termina con `end_turn` y un texto
 - **Then** el flujo es `start` y `end`, sin eventos `word`, con `reply = REMINDER_LOCATE` y `status = "ACTIVE"`
 
+### AC-007-58 — El prompt de decisión lleva la fecha actual y pide consultar en el mismo turno
+
+Cubre: HU-007-08, RN-007-44
+
+- **Given** la cliente está verificada, el reloj inyectado marca 2026-10-17 y la cliente escribe que no reconoce dos cargos sin dar fechas
+- **When** el agente llama al LLM para decidir el turno
+- **Then** el prompt de esa llamada incluye `Fecha actual: 2026-10-17`
+- **And** pide llamar a `consultar_transacciones` en ese mismo turno y usar los últimos 90 días si no hay fechas
+
 ## 7. Contratos de herramientas MCP
 
 ### 7.1 `buscar_cliente` (modificada, compatible)
@@ -1124,6 +1134,7 @@ Ningún resumen ni nota contiene el número completo de una tarjeta, el document
 | 2026-10-19 | (v0.3.0) ¿Qué hace el agente si `verificar_identidad` responde `INVALID_INPUT`? | Vuelve a pedir las fechas con un texto fijo, sin contar el intento y sin derivar. | RN-007-21, RN-007-40, AC-007-49 |
 | 2026-10-19 | (v0.3.0) Si en un mismo mensaje la cliente queda verificada y pide disputar un cobro, ¿se atiende la disputa en ese turno? | Sí: la guarda se evalúa en cada petición; lo pedido después de verificar se atiende y el `reply` lo redacta el LLM. AC-007-37 sigue vigente. | RN-007-37, RN-007-39, AC-007-50 |
 | 2026-10-19 | (v0.3.0) Si en ese mismo turno queda verificada y declara fraude, ¿qué se hace? | Se bloquea la tarjeta y se deriva (RN-007-14). Si las fechas fallan, se aplica RN-007-17. | RN-007-37, AC-007-52 |
+| 2026-10-19 | (v0.3.3, sincronización con el código) La cliente verificada pedía revisar dos cargos sin dar fechas y el turno terminaba sin consultar: ¿qué se hace? | El LLM recibe la fecha actual y la instrucción de consultar en el mismo turno, con 90 días por defecto. No se añade ninguna decisión por palabras (RN-007-33). | RN-007-44, AC-007-58 |
 
 ## 10. Preguntas abiertas
 
@@ -1145,6 +1156,7 @@ Ninguna.
 | 0.3.0 | 2026-10-19 | Corrección en la fase Plan (decisión del usuario): la fila 2 de AC-007-49 usa una fecha ISO válida que rechaza el servidor (`1990-03-14`), porque `1990-02-31` no llega al core. La spec 009 pasa a 0.2.0 para alinear RN-009-04 y AC-009-14. | Juangiov (con Claude Code) |
 | 0.3.1 | 2026-10-19 | Enmienda PATCH en la fase Implement (decisión del usuario): AC-007-54 aclara que, en las filas de `verificar_identidad`, la cliente conserva la localización previa y solo queda sin verificar. Sin cambio de comportamiento ni del plan. | Juangiov (con Claude Code) |
 | 0.3.2 | 2026-10-19 | Auditoría de cobertura de AC (fase 1: No cumple, H-09): RN-007-41 entra en el `Cubre:` de AC-007-48, cuyo texto ya la aplica (la búsqueda con varias coincidencias no cuenta como búsqueda sin coincidencias). Sin cambio de comportamiento ni del plan. | Juangiov (con Claude Code) |
+| 0.3.3 | 2026-10-19 | Enmienda PATCH por sincronización con el código (decisión del usuario): RN-007-44 y AC-007-58 recogen la fecha actual y la regla de consultar en el mismo turno en el prompt de decisión. Sin cambio en RN-007-23, RN-007-34 ni RN-007-35. | Juangiov (con Claude Code) |
 
 ---
 

@@ -25,7 +25,7 @@ from dispute_agent.application.ports.llm import (
     ToolCall,
     ToolResult,
 )
-from dispute_agent.application.system_prompt import SYSTEM_PROMPT
+from dispute_agent.application.system_prompt import build_decision_system
 from dispute_agent.application.use_cases.dispute_actions import DisputeActions
 from dispute_agent.application.use_cases.escalation_service import EscalationService
 from dispute_agent.application.use_cases.fraud_actions import FraudActions
@@ -302,7 +302,8 @@ class HandleCustomerMessage:
     async def _run_loop(self, conv: Conversation, outcomes: list[Outcome]) -> str:
         for iteration in range(1, self._max_iterations + 1):
             history = tuple(m for m in conv.history if isinstance(m, ChatMessage))
-            response = await self._llm.complete(SYSTEM_PROMPT, history, LLM_TOOLS)
+            system = build_decision_system(self._clock.today())
+            response = await self._llm.complete(system, history, LLM_TOOLS)
             reply = self._decide(conv, response, iteration)
             if reply is not None:
                 return reply

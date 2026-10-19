@@ -3,10 +3,10 @@
 | Campo | Valor |
 |---|---|
 | Feature | `007-dispute-resolution-agent` |
-| Versión | 0.3.0 |
+| Versión | 0.3.1 |
 | Estado | Aprobado |
 | Fecha | 2026-10-19 |
-| Spec | [spec.md](./spec.md) — versión 0.3.2 aprobada |
+| Spec | [spec.md](./spec.md) — versión 0.3.3 aprobada (la 0.3.3 sincroniza RN-007-44 con el código, ver §1.3) |
 | Tareas | [tasks.md](./tasks.md) |
 | Constitución | 1.0.1 |
 
@@ -128,6 +128,12 @@ Decisiones triviales tomadas:
 - **`INVALID_INPUT` en `buscar_cliente`:** no lo pide la spec. Sigue como hoy (`_read_failure`).
 - **Spec 009:** su versión 0.2.0 (aprobada con esta) solo cambia RN-009-04 y AC-009-14. Su plan no cambia de diseño; el test de AC-009-14 se ajusta en esta feature.
 
+### 1.3 Cambios de la versión 0.3.1 (spec 0.3.3, sincronización con el código)
+
+- **Fecha actual en el prompt de decisión (RN-007-44).** `system_prompt.build_decision_system(today)` devuelve `SYSTEM_PROMPT` más `Fecha actual: AAAA-MM-DD`. `HandleCustomerMessage._run_loop` lo construye en cada llamada con `Clock.today()` (el reloj inyectado), en lugar de enviar la constante. Sin la fecha el LLM no podía armar el rango de `consultar_transacciones` y cerraba el turno con un texto.
+- **Regla 10 del `SYSTEM_PROMPT`:** con la cliente verificada que menciona cargos, consultar en el mismo turno; sin fechas, últimos 90 días; los comercios no son parámetro; si falta la tarjeta, preguntar. Es solo una instrucción: el ciclo sigue decidiendo por la razón de parada y no interpreta el texto (RN-007-32, RN-007-33).
+- **Sin cambio** en RN-007-23, RN-007-34, RN-007-35 ni en el catálogo `LLM_TOOLS`. La validación de nombre y argumentos de las peticiones sigue escalando.
+
 ## 2. Componentes por capa
 
 Rutas relativas a `src/<app>/`.
@@ -188,6 +194,7 @@ Rutas relativas a `src/<app>/`.
 | `application` | `application/ports/audit_log.py` — `AuditEventType` | Modificado | Añade `"identification_required"` (RN-007-28, RN-007-42). |
 | `application` | `application/use_cases/handle_customer_message.py` — `HandleCustomerMessage` | Modificado | `begin_turn` y la sustitución por el texto fijo en `decide_turn`. Evento `identification_required`. `_blocked` anota la herramienta. `_evaluate_dispute` sin verificar se bloquea con `RN-007-01`. `_search_customer` y `_verify_identity` registran el paso; `INVALID_INPUT` de `verificar_identidad` ⇒ `INVALID_DATES` sin derivar (RN-007-37 a 42). |
 | `application` | `application/system_prompt.py`, `application/agent_tools.py` | Modificado | Regla y descripción: pedir un bloqueo sin declarar fraude no es `reportar_fraude` (RN-007-37). |
+| `application` | `application/system_prompt.py` — `build_decision_system(today)`; `use_cases/handle_customer_message.py` — `_run_loop` | Modificado | Prompt de decisión con la fecha actual del `Clock` y regla 10 de consultar en el mismo turno (RN-007-44, §1.3). |
 
 `stream_customer_message.py`, los routers y los adaptadores no cambian: ya respetan `drafted = False`.
 
@@ -326,6 +333,7 @@ Niveles por carpeta:
 | AC-007-55 | — | `TestClient(create_app(..., fakes))`: la conversación `A` se verifica por guion; un mensaje sin `conversation_id` crea `B ≠ A`; `consultar_transacciones` no llega a `FakeBankingTools`; `reply == REMINDER_LOCATE`; `A` sigue verificada en el repositorio | — | — |
 | AC-007-56 | `FakeAgentAuditLog` + `FixedAgentClock`, las 3 filas: exactamente 1 evento `identification_required` con `conversation_id`, `at`, `rule`, `reason`, `input.requested_tools` y `output.reply == "REMINDER_LOCATE"`; un `tool_blocked` por herramienta listada; ningún evento contiene el texto del mensaje, el del guion, `4111111111114321` ni `D-1001`. Negativos: los turnos de AC-007-46/47/48/49/51 no emiten `identification_required` | — | — | — |
 | AC-007-57 | `test_stream_customer_message_identification.py`: conversación nueva, `hola` y guion `end_turn`: eventos `ReplyStarted` y `ReplyEnded` sin `ReplyWord`; `reply == REMINDER_LOCATE`; `ACTIVE`; el `FakeLLM` no recibe llamada de redacción (`stream`) | `POST /api/chat/stream` con `TestClient`: el cuerpo SSE trae `start` y `end` sin `word` | — | AC-009-14 (spec 009 v0.2.0) actualizado en `tests/e2e/test_chat_stream_e2e.py`: con el MCP real, `start` y `end` con `REMINDER_LOCATE`, sin `word` y sin datos de las semillas |
+| AC-007-58 | `test_handle_customer_message.py::test_ac_007_58_handle_message__decision_prompt__has_today_and_same_turn_rule` (reloj fijo 2026-10-17; `FakeLLM.requests[0].system` con `Fecha actual: 2026-10-17`, la regla de consultar en el mismo turno y los 90 días); `test_drafting_prompt.py::test_build_decision_system__includes_today` | — | — | — |
 
 Adicionales:
 

@@ -4,6 +4,17 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
+# Marcas con las que el adaptador vuelca herramientas al historial de la redacción; nunca deben
+# aparecer en el texto que ve el cliente.
+INTERNAL_DATA_OPEN = "<datos_internos>"
+INTERNAL_DATA_CLOSE = "</datos_internos>"
+INTERNAL_MARKERS: tuple[str, ...] = (
+    "<datos_internos",
+    "</datos_internos",
+    "[herramienta",
+    "[resultado",
+)
+
 
 class LLMError(Exception):
     """Fallo del proveedor del LLM (red, cuota, respuesta inválida)."""

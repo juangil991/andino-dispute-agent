@@ -1299,3 +1299,19 @@ async def test_handle_message__verified_write_tool__blocked_with_rule(tool: str,
     [(content, is_error)] = _last_results(llm)
     assert is_error
     assert "sistema" in content
+
+
+# Regla: RN-007-44 — el prompt del ciclo de decisión lleva la fecha actual del reloj inyectado y
+# pide consultar las transacciones en el mismo turno.
+# AC-007-58 · Art. 3
+async def test_ac_007_58_handle_message__decision_prompt__has_today_and_same_turn_rule() -> None:
+    """AC-007-58: la llamada de decisión incluye `Fecha actual` y la regla de consultar."""
+    conv = _verified_conv()
+    use_case, llm, _, _ = _build([_final("Hola.")], _banking(), conv)
+
+    await use_case.handle(conv.conversation_id, "No reconozco dos cargos")
+
+    system = llm.requests[0].system
+    assert "Fecha actual: 2026-10-17" in system
+    assert "`consultar_transacciones` en ese mismo turno" in system
+    assert "últimos 90 días" in system

@@ -7,7 +7,7 @@ Decide solo por la razón de parada y la coherencia de la respuesta
 from dataclasses import dataclass
 from enum import Enum
 
-from dispute_agent.application.ports.llm import LLMResponse, LLMStreamEnd
+from dispute_agent.application.ports.llm import INTERNAL_MARKERS, LLMResponse, LLMStreamEnd
 
 
 class LoopStep(Enum):
@@ -32,8 +32,13 @@ class DraftVerdict:
 
 
 def classify_draft_end(end: LLMStreamEnd, text: str) -> DraftVerdict:
-    """Completa solo con `end_turn`, sin herramientas y con texto no vacío (RN-009-09 c)."""
-    if end.stop_reason == "end_turn" and not end.tool_calls and text.strip():
+    """Completa solo con `end_turn`, sin herramientas y con texto no vacío (RN-009-09 c).
+
+    Un texto que imita el registro interno de herramientas (`<datos_internos>`, `[herramienta`)
+    no es una respuesta válida para el cliente.
+    """
+    leaks_internal = any(marker in text for marker in INTERNAL_MARKERS)
+    if end.stop_reason == "end_turn" and not end.tool_calls and text.strip() and not leaks_internal:
         return DraftVerdict(complete=True)
     return DraftVerdict(complete=False, cause="LLM_INVALID_OUTPUT")
 

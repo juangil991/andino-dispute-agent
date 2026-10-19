@@ -54,3 +54,20 @@ def test_ac_009_03_drafting_system_does_not_change_agent_prompt() -> None:
     """SYSTEM_PROMPT del ciclo de decisión no cambia."""
     assert "Eres el agente de disputas" in SYSTEM_PROMPT
     assert build_drafting_system([]).endswith("[]")
+
+
+# Regla: RN-009-03 — la redacción no escribe llamadas a herramientas ni registros internos.
+# AC-009-31 · Art. 5
+def test_drafting_prompt__forbids_tool_call_text() -> None:
+    assert "<datos_internos>" in REPLY_DRAFTING_PROMPT
+    assert "nunca escribas llamadas a herramientas" in REPLY_DRAFTING_PROMPT
+
+
+# Regla: RN-007-44 — el prompt de decisión lleva la fecha actual para armar rangos de consultas.
+# AC-007-58 · Art. 3
+def test_build_decision_system__includes_today() -> None:
+    from datetime import date
+
+    from dispute_agent.application.system_prompt import build_decision_system
+
+    assert "Fecha actual: 2026-03-22" in build_decision_system(date(2026, 3, 22))
