@@ -283,3 +283,109 @@ def test_ac_010_12_chat__future_date_to_with_real_server__llm_corrects_and_conve
         "of": 2,
     }
     assert not [r for r in audit_records if r.get("event_type") == "escalation"]
+
+
+_WRONG_LAST4 = (
+    "4231"  # dígitos de la tarjeta 4321 intercambiados; no es de ninguna tarjeta de la clienta
+)
+
+
+def _script_wrong_card_then_correct(today: date) -> list[LLMResponse]:
+    """Verificación, consulta con tarjeta ajena (4231) y luego con la correcta (4321)."""
+    verification = _script(today)[:4]
+    date_from = (today - timedelta(days=89)).isoformat()  # 90 días contando ambos extremos
+    return [
+        *verification,
+        _tools(
+            _call(
+                "c3",
+                "consultar_transacciones",
+                card_last4=_WRONG_LAST4,
+                date_from=date_from,
+                date_to=today.isoformat(),
+            )
+        ),
+        _tools(
+            _call(
+                "c4",
+                "consultar_transacciones",
+                card_last4="4321",
+                date_from=date_from,
+                date_to=today.isoformat(),
+            )
+        ),
+        LLMResponse(text="Veo dos cobros recientes en tu tarjeta."),
+    ]
+
+
+# Regla: RN-011-03 — una tarjeta que no es de la clienta no llega al servidor; se devuelve al LLM.
+# Regla: RN-011-09 — el rechazo queda auditado como `tool_call` sin los 4 dígitos pedidos.
+# AC-011-12 · Art. 8 (auditoría) · Art. 10 (no derivar sin necesidad)
+def test_ac_011_12_chat__wrong_card_digits_with_real_server__guard_blocks_then_llm_corrects(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-011-12: la guarda frena la tarjeta ajena; el LLM corrige y sigue ACTIVE."""
+    url = f"sqlite:///{(tmp_path / 'core.db').as_posix()}"
+    _prepare_database(url)
+    settings = AgentSettings(
+        core_database_url=url,
+        core_seed_on_start=False,
+        mcp_call_timeout_seconds=20,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    llm = FakeLLM(_script_wrong_card_then_correct(date.today()))
+    messages = [
+        f"Mi documento es {_DOCUMENT}",
+        "Nací el 14 de marzo de 1985 y mi documento se expidió el 2 de abril de 2005",
+        "Quiero revisar un cobro de mi tarjeta",
+    ]
+
+    bodies: list[dict[str, Any]] = []
+    with TestClient(create_app(settings, llm=llm)) as client:
+        conversation_id: str | None = None
+        for text in messages:
+            payload: dict[str, Any] = {"message": text}
+            if conversation_id is not None:
+                payload["conversation_id"] = conversation_id
+            response = client.post("/api/chat", json=payload)
+            assert response.status_code == 200, response.text
+            bodies.append(response.json())
+            conversation_id = bodies[-1]["conversation_id"]
+
+    last = bodies[-1]
+    assert last["status"] == "ACTIVE"
+    assert last["outcomes"] == []
+    assert last["reply"] == "Veo dos cobros recientes en tu tarjeta."
+    _, escalations = _read_core(url)
+    assert escalations == []
+
+    audit_records = [
+        json.loads(line) for line in capsys.readouterr().err.splitlines() if line.startswith("{")
+    ]
+    rejected = [
+        r
+        for r in audit_records
+        if r.get("event_type") == "tool_call" and r.get("rule") == "RN-011-03"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0]["tool"] == "consultar_transacciones"
+    assert rejected[0]["conversation_id"] == conversation_id
+    assert rejected[0]["output"] == {"error": "UNKNOWN_CARD", "correction": 1, "of": 2}
+    assert _WRONG_LAST4 not in json.dumps(rejected[0]["input"])
+    # El servidor no recibió la 1.ª petición: ninguna consulta con el valor erróneo llegó a él.
+    queries = [
+        r
+        for r in audit_records
+        if r.get("event_type") == "tool_call"
+        and r.get("tool") == "consultar_transacciones"
+        and r.get("rule") != "RN-011-03"
+    ]
+    assert len(queries) == 1
+    assert _WRONG_LAST4 not in json.dumps(queries[0])
+    # La 2.ª consulta (rango válido de 90 días) devolvió transacciones, no un INVALID_INPUT.
+    assert not [r for r in audit_records if r.get("rule") == "RN-010-01"]
+    assert "INVALID_INPUT" not in json.dumps(queries[0])
+    assert queries[0]["output"] == {"transactions": 2, "refinement_required": False}
+    assert queries[0]["input"]["card_last4"] == "4321"
+    assert not [r for r in audit_records if r.get("event_type") == "escalation"]

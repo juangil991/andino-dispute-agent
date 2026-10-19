@@ -117,3 +117,33 @@ async def test_ac_010_12_list_transactions__future_date_to__raises_invalid_input
 
     assert raised.value.code == "INVALID_INPUT"
     assert raised.value.field == "date_to"
+
+
+# Regla: RN-011-03 — la guarda se apoya en que el core responde NOT_FOUND no reintentable
+# ante una tarjeta ajena (RN-003-04).
+# AC-011-12 · Art. 7 (servidor real por stdio; sustenta la guarda de consulta de transacciones)
+async def test_ac_011_12_list_transactions__card_not_owned__raises_not_found_non_retryable(
+    tmp_path: Path,
+) -> None:
+    """AC-011-12: una tarjeta ajena produce NOT_FOUND no reintentable."""
+    adapter = McpStdioBankingAdapter(
+        command=sys.executable,
+        args=["-m", "core_banking_mcp.server"],
+        env={
+            **os.environ,
+            "CORE_DATABASE_URL": f"sqlite:///{(tmp_path / 'core.db').as_posix()}",
+        },
+        call_timeout_seconds=20,
+    )
+    await adapter.open()
+    try:
+        await adapter.verify_identity("conv-card", "C-0001", date(1990, 3, 15), date(2008, 4, 20))
+        with pytest.raises(BankingToolError) as raised:
+            await adapter.list_transactions(
+                "conv-card", "9999", date(2026, 1, 1), date(2026, 1, 31)
+            )
+    finally:
+        await adapter.close()
+
+    assert raised.value.code == "NOT_FOUND"
+    assert raised.value.retryable is False

@@ -3,7 +3,7 @@
 | Campo | Valor |
 |---|---|
 | Feature | `010-invalid-input-correction` |
-| Versión | 0.1.0 |
+| Versión | 0.1.2 |
 | Estado | Aprobada |
 | Fecha | 2026-10-19 |
 | Plan | [plan.md](./plan.md) |
@@ -57,7 +57,7 @@ Esta spec corrige el comportamiento para las dos lecturas con argumentos del LLM
 |---|---|---|
 | RN-010-01 | Si `consultar_transacciones` o `buscar_cliente` responden `INVALID_INPUT`, el agente no lo trata como falla del sistema: no aplica RN-007-21, no deriva y no cierra la conversación. Devuelve al LLM un error de validación `invalid_input` con el campo que el servidor señala (§7.2) para que corrija los argumentos y vuelva a pedir la herramienta. El agente nunca reenvía por sí mismo los mismos argumentos. | `agent-behavior.md` §19; `mcp-client.md` §4; RN-007-40 |
 | RN-010-02 | El texto que recibe el LLM en ese error es **fijo** y lo redacta el agente (§7.2); no es el texto del servidor. No incluye los valores enviados (documento, nombre, tarjeta, fechas) ni detalles internos. Indica cuántas correcciones quedan en el mensaje. | RN-007-27; Art. 1; `mcp-client.md` §6 |
-| RN-010-03 | Como máximo **2** correcciones por mensaje de la cliente: se cuentan los `INVALID_INPUT` de `consultar_transacciones` y de `buscar_cliente` juntos y el contador vuelve a 0 con cada mensaje nuevo de la cliente. El 1.º y el 2.º `INVALID_INPUT` del mensaje se devuelven al LLM; el 3.º no se corrige y se aplica RN-010-04. | Clarificación 2026-10-19; RN-007-23 (el tope de 8 llamadas sigue vigente) |
+| RN-010-03 | Como máximo **2** correcciones por mensaje de la cliente: se cuentan los `INVALID_INPUT` de `consultar_transacciones` y de `buscar_cliente` juntos y el contador vuelve a 0 con cada mensaje nuevo de la cliente. El contador incluye también los rechazos de la spec 011 (tarjeta ajena y `NOT_FOUND` de `consultar_transacciones`, RN-011-06). El 1.º y el 2.º `INVALID_INPUT` del mensaje se devuelven al LLM; el 3.º no se corrige y se aplica RN-010-04. | Clarificación 2026-10-19; RN-007-23 (el tope de 8 llamadas sigue vigente) |
 | RN-010-04 | Con el 3.º `INVALID_INPUT` del mensaje el agente deriva con `INSUFFICIENT_OR_CONTRADICTORY_INFO`, informa a la cliente con el texto fijo `ESCALATED` sin transacción (§7.3 de la spec 007) y cierra la conversación (RN-007-24). La nota de la derivación es `RN-010-04: <herramienta> INVALID_INPUT (campo: <campo>) tras 2 correcciones`. El resumen es completo sin transacción ni tarjeta si la cliente está verificada (`consultar_transacciones`) y limitado si no lo está (`buscar_cliente`). Al LLM se le devuelve el mismo resultado de cierre que en RN-007-21. | Art. 10; clarificación 2026-10-19; RN-006-13; RN-007-24 |
 | RN-010-05 | Un `INVALID_INPUT` no da nada por hecho: no localiza a la cliente, no registra transacciones como vistas, no genera los `outcomes` `NO_TRANSACTIONS_FOUND` ni `REFINEMENT_REQUIRED` y no cuenta como búsqueda sin coincidencias ni como intento fallido (RN-007-05, RN-007-41). | Art. 5; RN-007-13; RN-007-41 |
 | RN-010-06 | Si al terminar el turno la cliente no está verificada y el último resultado de identificación del turno es un `INVALID_INPUT` de `buscar_cliente`, el `reply` es el texto fijo `INVALID_SEARCH` (§7.4). Se añade a la regla de elección de RN-007-38 en el paso (2). | RN-007-38; clarificación 2026-10-19 |
@@ -272,6 +272,7 @@ No hay preguntas abiertas.
 |---|---|---|---|
 | 0.1.0 | 2026-10-19 | Versión inicial. Enmienda la spec 007 (RN-007-21, RN-007-28, RN-007-38, §7.4, §8) en la versión 0.4.0 de esa spec, que se actualiza en el mismo cambio (Art. 2, §4.3.3). | Juangiov (con Claude Code) |
 | 0.1.1 | 2026-10-19 | Spec aprobada por el usuario. | Juangiov (con Claude Code) |
+| 0.1.2 | 2026-10-19 | Enmienda PATCH por la spec 011: RN-010-03 aclara que el contador de 2 correcciones incluye los rechazos de la spec 011 (RN-011-06). | Juangiov (con Claude Code) |
 
 ---
 

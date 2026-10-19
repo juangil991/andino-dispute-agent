@@ -1,6 +1,6 @@
 """Tests del error de negocio de las herramientas del core (campo inválido)."""
 
-from tests.fakes.banking_errors import invalid_input
+from tests.fakes.banking_errors import invalid_input, not_found
 
 from dispute_agent.application.ports.banking_tools import BankingToolError
 
@@ -18,3 +18,16 @@ def test_banking_tool_error__field_argument__is_kept_and_defaults_to_none() -> N
     assert built.code == "INVALID_INPUT"
     assert built.retryable is False
     assert built.field == "date_to"
+
+
+# Regla: RN-011-05 — NOT_FOUND no reintentable sin campo.
+# AC-011-07 · Art. 10
+def test_not_found_builder__returns_non_retryable_not_found_error() -> None:
+    """AC-011-07: el builder not_found produce un NOT_FOUND no reintentable sin campo."""
+    error = not_found()
+
+    assert isinstance(error, BankingToolError)
+    assert error.code == "NOT_FOUND"
+    assert error.retryable is False
+    assert error.field is None
+    assert not_found("no existe").message == "no existe"

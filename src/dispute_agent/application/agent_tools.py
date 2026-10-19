@@ -67,7 +67,8 @@ LLM_TOOLS: tuple[ToolSpec, ...] = (
         name="consultar_transacciones",
         description=(
             "Consulta las transacciones de una tarjeta del cliente verificado en un rango "
-            "de fechas de máximo 90 días. Úsala para localizar el cargo en disputa."
+            "de fechas: date_to como máximo 89 días después de date_from (90 días contando "
+            "ambos extremos). Úsala para localizar el cargo en disputa."
         ),
         input_schema=_object(
             {
@@ -82,7 +83,10 @@ LLM_TOOLS: tuple[ToolSpec, ...] = (
                 },
                 "date_to": {
                     "type": "string",
-                    "description": "Fecha final, formato AAAA-MM-DD (máximo 90 días).",
+                    "description": (
+                        "Fecha final, formato AAAA-MM-DD. Como máximo 89 días después de "
+                        "date_from (90 días contando ambos extremos)."
+                    ),
                 },
             },
             ["card_last4", "date_from", "date_to"],

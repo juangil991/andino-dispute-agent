@@ -1,6 +1,7 @@
 """Instrucciones de redacción de la respuesta (spec 009, RN-009-03)."""
 
 import json
+from datetime import date
 
 from dispute_agent.application.system_prompt import (
     REPLY_DRAFTING_PROMPT,
@@ -32,11 +33,11 @@ def test_ac_009_04_drafting_prompt_forbids_claiming_actions_outside_outcomes() -
     assert "4 dígitos" in prompt
     assert "no puedes pedir ni ejecutar acciones" in prompt
 
-    system = build_drafting_system([_outcome()])
+    system = build_drafting_system([_outcome()], date(2026, 10, 19))
     assert system.startswith(REPLY_DRAFTING_PROMPT)
     payload = system[len(REPLY_DRAFTING_PROMPT) :]
     start = payload.index("[")
-    assert json.loads(payload[start:]) == [
+    assert json.loads(payload[start:].split("\n", 1)[0]) == [
         {
             "kind": "DISPUTE_OPENED",
             "rule": "RN-001",
@@ -53,7 +54,16 @@ def test_ac_009_04_drafting_prompt_forbids_claiming_actions_outside_outcomes() -
 def test_ac_009_03_drafting_system_does_not_change_agent_prompt() -> None:
     """SYSTEM_PROMPT del ciclo de decisión no cambia."""
     assert "Eres el agente de disputas" in SYSTEM_PROMPT
-    assert build_drafting_system([]).endswith("[]")
+    system = build_drafting_system([], date(2026, 10, 19))
+    assert system.startswith(REPLY_DRAFTING_PROMPT + "[]\n")
+
+
+# Regla: RN-011-02 — la redacción lleva la fecha actual del reloj.
+# AC-011-02 · Art. 3
+def test_ac_011_02_build_drafting_system__includes_today() -> None:
+    """AC-011-02: el prompt de redacción incluye la línea de fecha actual."""
+    system = build_drafting_system([_outcome()], date(2026, 10, 19))
+    assert "Fecha actual: 2026-10-19 (formato AAAA-MM-DD)." in system
 
 
 # Regla: RN-009-03 — la redacción no escribe llamadas a herramientas ni registros internos.
@@ -66,8 +76,6 @@ def test_drafting_prompt__forbids_tool_call_text() -> None:
 # Regla: RN-007-44 — el prompt de decisión lleva la fecha actual para armar rangos de consultas.
 # AC-007-58 · Art. 3
 def test_build_decision_system__includes_today() -> None:
-    from datetime import date
-
     from dispute_agent.application.system_prompt import build_decision_system
 
     assert "Fecha actual: 2026-03-22" in build_decision_system(date(2026, 3, 22))

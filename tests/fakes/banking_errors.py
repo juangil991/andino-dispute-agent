@@ -11,3 +11,12 @@ def invalid_input(field: str, message: str | None = None) -> BankingToolError:
         retryable=False,
         field=field,
     )
+
+
+def not_found(message: str | None = None) -> BankingToolError:
+    """Error NOT_FOUND no reintentable (recurso inexistente o ajeno), sin campo."""
+    return BankingToolError(
+        code="NOT_FOUND",
+        message=message or "Recurso no encontrado",
+        retryable=False,
+    )

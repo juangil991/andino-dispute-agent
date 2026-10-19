@@ -126,6 +126,23 @@ def invalid_input_message(tool: str, field: str | None) -> str:
     )
 
 
+def unknown_card_message(own_last4: tuple[str, ...]) -> str:
+    """Texto fijo de spec 011 §7.1: solo los últimos 4 de las tarjetas de la clienta."""
+    if len(own_last4) > 1:
+        listed = f"{', '.join(own_last4[:-1])} y {own_last4[-1]}"
+    else:
+        listed = "".join(own_last4)
+    return (
+        f"Esa tarjeta no está entre las de la clienta (terminadas en {listed}). "
+        "Usa una de ellas o pregúntale a la clienta cuál es; no repitas los mismos dígitos."
+    )
+
+
+NOT_FOUND_CARD_MESSAGE = (
+    "No se encontró esa tarjeta. Pídele a la clienta que revise los últimos "
+    "4 dígitos antes de volver a consultar."
+)
+
 CONVERSATION_CLOSED_MESSAGE = (
     "Tu caso ya fue derivado a un analista. Una persona continuará la atención."
 )
