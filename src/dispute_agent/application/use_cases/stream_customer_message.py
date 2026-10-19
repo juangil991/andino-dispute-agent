@@ -119,7 +119,9 @@ class StreamCustomerMessage:
         end: LLMStreamEnd | None = None
         cause: str | None = None
         settled = False  # el turno ya se guardó: una desconexión posterior no cambia nada
-        iterator = self._llm.stream(build_drafting_system(outcomes), history).__aiter__()
+        iterator = self._llm.stream(
+            build_drafting_system(outcomes, self._clock.today()), history
+        ).__aiter__()
         try:
             try:
                 while (item := await self._next_item(iterator)) is not None:

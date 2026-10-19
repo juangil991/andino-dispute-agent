@@ -74,3 +74,18 @@ def test_ac_007_44_agent_tools__report_fraud_description_excludes_block_card_wit
         "Pedir que se bloquee la tarjeta sin declarar sospecha de fraude no es motivo para "
         "reportar_fraude"
     ) in spec.description
+
+
+# Regla: RN-011-01 — la descripción de `consultar_transacciones` declara el límite exacto del rango.
+# AC-011-01 · agent-behavior §17, §18
+def test_ac_011_01_agent_tools__list_transactions_states_89_day_limit() -> None:
+    """AC-011-01: la herramienta dice 89 días tras date_from (90 contando ambos extremos)."""
+    tool = next(t for t in LLM_TOOLS if t.name == "consultar_transacciones")
+    props = tool.input_schema["properties"]
+    assert isinstance(props, dict)
+    texts = [tool.description, props["date_to"]["description"]]
+    for text in texts:
+        assert "89 días" in text
+        assert "90 días contando ambos extremos" in text
+        assert "máximo 90 días" not in text
+        assert "últimos 90 días" not in text.replace("últimos 90 días contando ambos extremos", "")

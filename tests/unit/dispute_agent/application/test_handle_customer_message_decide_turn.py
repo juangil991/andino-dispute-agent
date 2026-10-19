@@ -47,7 +47,7 @@ class _Repo:
 
 
 def _build(
-    script: list[LLMResponse], conv: Conversation
+    script: list[LLMResponse], conv: Conversation, clock: FixedAgentClock | None = None
 ) -> tuple[HandleCustomerMessage, _Repo, FakeBankingTools]:
     banking = FakeBankingTools().respond(
         "escalate",
@@ -56,7 +56,7 @@ def _build(
         ),
     )
     audit = FakeAgentAuditLog()
-    clock = FixedAgentClock(_NOW)
+    clock = clock or FixedAgentClock(_NOW)
     escalation = EscalationService(banking, audit, clock)
     dispute_actions = DisputeActions(
         DisputePolicy(Decimal(4000)), banking, escalation, audit, clock
@@ -104,6 +104,21 @@ async def test_decide_turn__loop_ends_with_end_turn__returns_outcomes_without_sa
     assert decision.conversation is conv
     assert [m.role for m in conv.history] == ["user"]
     assert repo.saves == 0
+
+
+# Regla: RN-011-02 — el prompt del ciclo de decisión lleva la fecha actual (sin streaming).
+# AC-011-02 · Art. 3
+async def test_ac_011_02_handle__decision_prompt_includes_current_date() -> None:
+    """AC-011-02: el `system` del ciclo de decisión incluye la fecha del reloj."""
+    conv = _verified_conv()
+    clock = FixedAgentClock(datetime(2026, 10, 19, 15, 0, tzinfo=UTC))
+    use_case, _, _ = _build([end_turn_response("Hola")], conv, clock)
+
+    await use_case.decide_turn(conv.conversation_id, "Hola")
+
+    llm = use_case._llm
+    assert isinstance(llm, FakeLLM)
+    assert "Fecha actual: 2026-10-19 (formato AAAA-MM-DD)." in llm.requests[0].system
 
 
 # Regla: RN-009-04 — con `max_tokens` el `reply` es texto fijo, sin llamada de redacción.

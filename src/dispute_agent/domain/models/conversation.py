@@ -54,7 +54,10 @@ class Conversation:
         self.turn_invalid_inputs = 0
 
     def register_invalid_input(self) -> int:
-        """Cuenta una corrección de entrada inválida en el turno y devuelve el total."""
+        """Cuenta una corrección del mensaje (RN-011-06) en el turno y devuelve el total.
+
+        Incluye entrada inválida, tarjeta desconocida y tarjeta no encontrada.
+        """
         self.turn_invalid_inputs += 1
         return self.turn_invalid_inputs
 

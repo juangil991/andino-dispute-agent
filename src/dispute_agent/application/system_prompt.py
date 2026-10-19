@@ -31,15 +31,22 @@ disputas, derivaciones): los `outcomes` solo contienen lo que el sistema ejecut�
 reportar_fraude.
 10. Cuando el cliente ya está verificado y menciona cargos, llama a \
 `consultar_transacciones` en ese mismo turno; no termines con un texto que anuncie la \
-consulta sin hacerla. Si el cliente no da fechas, usa los últimos 90 días hasta la fecha \
-actual. Los comercios que nombre el cliente no son un parámetro: búscalos entre las \
+consulta sin hacerla. Usa `date_to` como máximo 89 días después de `date_from` (90 días \
+contando ambos extremos). Si el cliente no da fechas, usa los últimos 90 días contando \
+ambos extremos: `date_from` es `hoy - 89` y `date_to` es hoy. \
+Los comercios que nombre el cliente no son un parámetro: búscalos entre las \
 transacciones devueltas. Si no sabes qué tarjeta es, pregúntalo.
 """
 
 
+def current_date_line(today: date) -> str:
+    """Línea con la fecha actual, que el LLM necesita para armar rangos de fechas."""
+    return f"Fecha actual: {today.isoformat()} (formato AAAA-MM-DD).\n"
+
+
 def build_decision_system(today: date) -> str:
     """Prompt del ciclo de decisión con la fecha actual, que el LLM necesita para los rangos."""
-    return f"{SYSTEM_PROMPT}\nFecha actual: {today.isoformat()} (formato AAAA-MM-DD).\n"
+    return f"{SYSTEM_PROMPT}\n{current_date_line(today)}"
 
 
 REPLY_DRAFTING_PROMPT: str = """\
@@ -65,8 +72,8 @@ Outcomes del turno (JSON):
 """
 
 
-def build_drafting_system(outcomes: Sequence[Outcome]) -> str:
-    """Instrucciones de redacción con los `outcomes` del turno en JSON (RN-009-03)."""
+def build_drafting_system(outcomes: Sequence[Outcome], today: date) -> str:
+    """Instrucciones de redacción con los `outcomes` del turno en JSON y la fecha actual."""
     payload = [
         {
             "kind": o.kind.value,
@@ -78,4 +85,5 @@ def build_drafting_system(outcomes: Sequence[Outcome]) -> str:
         }
         for o in outcomes
     ]
-    return REPLY_DRAFTING_PROMPT + json.dumps(payload, ensure_ascii=False)
+    outcomes_json = json.dumps(payload, ensure_ascii=False)
+    return f"{REPLY_DRAFTING_PROMPT}{outcomes_json}\n{current_date_line(today)}"

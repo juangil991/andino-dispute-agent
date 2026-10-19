@@ -4,6 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
+from typing import Literal
 
 from dispute_agent.application.agent_tools import LLM_TOOLS, WRITE_TOOLS
 from dispute_agent.application.failure_detail import describe_failure
@@ -68,6 +69,9 @@ _UNAVAILABLE_CODE = "UNAVAILABLE"
 _INVALID_INPUT_RULE = "RN-010-01"
 _MAX_CORRECTIONS = 2  # RN-010-03
 _CAP_RULE = "RN-010-04"
+_UNKNOWN_CARD_RULE = "RN-011-03"
+_NOT_FOUND_RULE = "RN-011-05"
+_CARD_CAP_RULE = "RN-011-07"
 # Motivo fijo por regla para el evento `llm_response` (RN-007-36); nunca incluye texto del LLM.
 _LLM_RESPONSE_REASONS = {
     "RN-007-32": "la razón de parada del LLM decide si continuar o responder",
@@ -431,12 +435,12 @@ class HandleCustomerMessage:
             try:
                 return await self._read(conv, call, args, outcomes)
             except (BankingToolError, BankingToolUnavailableError) as error:
-                if (
-                    isinstance(args, (_ListArgs, _SearchArgs))
-                    and isinstance(error, BankingToolError)
-                    and error.code == "INVALID_INPUT"
-                ):
-                    return await self._invalid_input(conv, call, error, outcomes)
+                if isinstance(error, BankingToolError):
+                    # Rechazos corregibles: INVALID_INPUT (RN-010-01) y NOT_FOUND (RN-011-05)
+                    if error.code == "INVALID_INPUT" and isinstance(args, (_ListArgs, _SearchArgs)):
+                        return await self._invalid_input(conv, call, error, outcomes)
+                    if error.code == "NOT_FOUND" and isinstance(args, _ListArgs):
+                        return await self._card_rejection(conv, call, "NOT_FOUND", outcomes)
                 return await self._read_failure(conv, call, error, outcomes)
         if isinstance(args, _EvaluateArgs):
             return await self._evaluate_dispute(conv, call, args, outcomes)
@@ -533,6 +537,49 @@ class HandleCustomerMessage:
         )
         return _invalid_input_result(call.id, call.name, error.field, _MAX_CORRECTIONS - number)
 
+    async def _card_rejection(
+        self,
+        conv: Conversation,
+        call: ToolCall,
+        kind: Literal["UNKNOWN_CARD", "NOT_FOUND"],
+        outcomes: list[Outcome],
+    ) -> ToolResult:
+        """RN-011-03/05/06/07: rechazo de tarjeta corregible; el 3.º del mensaje deriva y cierra."""
+        number = conv.register_invalid_input()
+        if number > _MAX_CORRECTIONS:
+            return await self._derive_and_close(
+                conv,
+                call,
+                outcomes,
+                EscalationReason.INSUFFICIENT_OR_CONTRADICTORY_INFO,
+                _CARD_CAP_RULE,
+                f"{call.name} {kind} tras {_MAX_CORRECTIONS} correcciones",
+            )
+        # RN-011-09: rastro de cada rechazo corregible, sin los 4 dígitos pedidos · Art. 8
+        if kind == "UNKNOWN_CARD":
+            tool_input: dict[str, object] = {"fields": sorted(call.arguments)}
+            rule, reason = (
+                _UNKNOWN_CARD_RULE,
+                "la tarjeta no es de la clienta; se devuelve al LLM para corregirla",
+            )
+        else:
+            tool_input = _safe(conv, call.arguments)
+            rule, reason = (
+                _NOT_FOUND_RULE,
+                "tarjeta no encontrada por el core; se devuelve al LLM para que la clienta "
+                "revise los dígitos",
+            )
+        self._audit_call(
+            conv,
+            call.name,
+            tool_input,
+            {"error": kind, "correction": number, "of": _MAX_CORRECTIONS},
+            rule,
+            reason,
+        )
+        cards_last4 = tuple(card.last4 for card in conv.known_cards)
+        return _card_rejection_result(call.id, kind, cards_last4, _MAX_CORRECTIONS - number)
+
     async def _read_failure(
         self,
         conv: Conversation,
@@ -594,6 +641,18 @@ class HandleCustomerMessage:
                 _UNVERIFIED_RULE,
                 "Primero debe verificarse la identidad del cliente con verificar_identidad.",
             )
+        last4 = args.card_last4
+        if (
+            conv.known_cards
+            and last4 is not None
+            and len(last4) == 4
+            and last4.isascii()
+            and last4.isdigit()
+            and not conv.card_by_last4(last4)
+        ):
+            # RN-011-03: 4 dígitos que no son de la clienta no llegan al core;
+            # un valor mal formado sí llega y el core responde INVALID_INPUT (spec 010)
+            return await self._card_rejection(conv, call, "UNKNOWN_CARD", outcomes)
         try:
             date_from = date.fromisoformat(args.date_from or "")
             date_to = date.fromisoformat(args.date_to or "")
@@ -937,6 +996,30 @@ def _invalid_input_result(call_id: str, tool: str, field: str | None, remaining:
         ensure_ascii=False,
     )
     return ToolResult(call_id, content, is_error=True)
+
+
+def _card_rejection_result(
+    call_id: str,
+    kind: Literal["UNKNOWN_CARD", "NOT_FOUND"],
+    cards_last4: tuple[str, ...],
+    remaining: int,
+) -> ToolResult:
+    """Resultado de error de tarjeta hacia el LLM (spec 011 §7.1 y §7.2)."""
+    payload: dict[str, object]
+    if kind == "UNKNOWN_CARD":
+        payload = {
+            "error": "unknown_card",
+            "cards_last4": list(cards_last4),
+            "corrections_remaining": remaining,
+            "message": messages.unknown_card_message(cards_last4),
+        }
+    else:
+        payload = {
+            "error": "not_found",
+            "corrections_remaining": remaining,
+            "message": messages.NOT_FOUND_CARD_MESSAGE,
+        }
+    return ToolResult(call_id, json.dumps(payload, ensure_ascii=False), is_error=True)
 
 
 def _safe(conv: Conversation, data: Mapping[str, object]) -> dict[str, object]:

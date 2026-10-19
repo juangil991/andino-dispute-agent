@@ -99,6 +99,7 @@ class _Harness:
         script: list[object],
         stream_script: list[StreamScript],
         banking: FakeBankingTools | None = None,
+        clock: FixedAgentClock | None = None,
     ) -> None:
         self.timeline: list[str] = []
         self.sleeper = VirtualSleeper()
@@ -116,7 +117,7 @@ class _Harness:
         )
         self.audit = _TimelineAudit(self.timeline)
         self.repo = _Repo(*([conv] if conv else []))
-        clock = FixedAgentClock(_NOW)
+        clock = clock or FixedAgentClock(_NOW)
         ids = SequentialIdGenerator()
         escalation = EscalationService(self.banking, self.audit, clock)
         dispute_actions = DisputeActions(
@@ -184,6 +185,20 @@ def _chunks(text: str, size: int) -> list[tuple[float, str]]:
 
 def _call(call_id: str, name: str, **arguments: object) -> ToolCall:
     return ToolCall(id=call_id, name=name, arguments=dict(arguments))
+
+
+# Regla: RN-011-02 — el prompt de redacción en streaming lleva la fecha actual.
+# AC-011-02 · Art. 3
+async def test_ac_011_02_stream__drafting_prompt_includes_current_date() -> None:
+    """AC-011-02: el `system` que recibe `stream` incluye la fecha del reloj."""
+    conv = _verified_conv()
+    clock = FixedAgentClock(datetime(2026, 10, 19, 15, 0, tzinfo=UTC))
+    harness = _Harness(conv, [end_turn_response("texto")], [([(0.0, "Hola")], _END)], clock=clock)
+
+    await harness.run(conv.conversation_id)
+
+    system = harness.llm.stream_requests[0].system
+    assert "Fecha actual: 2026-10-19 (formato AAAA-MM-DD)." in system
 
 
 # Regla: RN-009-01 — `POST /api/chat/stream` responde `200` con un flujo de eventos.

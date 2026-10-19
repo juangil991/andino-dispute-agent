@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 from tests.fakes.agent_transaction_builder import DisputedTransactionBuilder
+from tests.fakes.banking_errors import not_found
 from tests.fakes.conversation_builder import ConversationBuilder
 from tests.fakes.fake_agent_audit_log import FakeAgentAuditLog
 from tests.fakes.fake_banking_tools import FakeBankingTools
@@ -597,6 +598,30 @@ async def test_ac_007_23_handle_message__write_failure__escalates_without_leakin
     saved = repo.get(result.conversation_id)
     assert saved is not None
     assert saved.status is ConversationStatus.ESCALATED
+    assert _closed_events(audit) == ["RN-007-21"]
+
+
+# Regla: RN-011-10 — NOT_FOUND de una escritura sigue derivando por RN-007-21.
+# AC-011-11
+async def test_ac_011_11_handle__not_found_in_write_tool_still_escalates() -> None:
+    """AC-011-11: NOT_FOUND de iniciar_disputa deriva con UNRECOVERABLE_SYSTEM_FAILURE."""
+    conv = _verified_conv(_tx("TX-L1", "85000.00"))
+    banking = _banking().respond("open_dispute", not_found())
+    use_case, _llm, _repo, audit = _build(
+        [
+            _tools(_call("c1", "evaluar_disputa", transaction_id="TX-L1")),
+            _final("Tuvimos un problema; una persona continuará."),
+        ],
+        banking,
+        conv,
+    )
+
+    result = await use_case.handle(conv.conversation_id, "No reconozco TX-L1")
+
+    escalations = _calls(banking, "escalate")
+    assert len(escalations) == 1
+    assert escalations[0]["reason"] is EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE
+    assert result.status is ConversationStatus.ESCALATED
     assert _closed_events(audit) == ["RN-007-21"]
 
 
