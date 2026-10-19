@@ -12,6 +12,7 @@ AuditEventType = Literal[
     "conversation_closed",
     "llm_response",
     "reply_shown",
+    "identification_required",
 ]
 
 

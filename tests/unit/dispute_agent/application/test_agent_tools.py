@@ -60,3 +60,17 @@ def test_system_prompt_content() -> None:
     assert "número" in lowered and "tarjeta" in lowered
     for name in EXPECTED - {"buscar_cliente", "verificar_identidad", "consultar_transacciones"}:
         assert name in SYSTEM_PROMPT
+
+
+# Regla: RN-007-37 — Pedir que se bloquee la tarjeta sin declarar sospecha de fraude no es
+# motivo para `reportar_fraude`.
+# AC-007-44 · Art. 5
+def test_ac_007_44_agent_tools__report_fraud_description_excludes_block_card_without_fraud() -> (
+    None
+):
+    """AC-007-44 / RN-007-37: la descripción de reportar_fraude incluye la frase acordada."""
+    spec = next(t for t in LLM_TOOLS if t.name == "reportar_fraude")
+    assert (
+        "Pedir que se bloquee la tarjeta sin declarar sospecha de fraude no es motivo para "
+        "reportar_fraude"
+    ) in spec.description

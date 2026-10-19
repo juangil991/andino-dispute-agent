@@ -626,11 +626,17 @@ async def test_ac_007_21_handle_message__multiple_matches__asks_more_data() -> N
     assert [json.loads(c) for c in _tool_results(llm)] == [
         {"matches": 2, "refinement_required": False}
     ]
-    assert "matches" in result.reply
+    # Literal de spec §7.4 (ASK_MORE_DATA); el texto del LLM (con los datos) se descarta.
+    assert result.reply == (
+        "Necesito un dato adicional para identificarte. Indícame tu número de "
+        "documento o los últimos 4 dígitos de tu tarjeta."
+    )
     sent = _all_sent_text(llm)
     forbidden = ("C-0001", "C-0003", "****01", "****03", "**** 4321", "**** 5555", "CARD-L")
     for datum in forbidden:
         assert datum not in sent
+    # El nombre lo escribió la cliente (está en el historial); no puede salir en la respuesta.
+    for datum in (*forbidden, "Laura Méndez"):
         assert datum not in result.reply
         assert datum not in _outcomes_text(result)
     assert _names(banking) == ["search_customer"]
@@ -846,7 +852,24 @@ async def test_handle_message__unknown_conversation__raises_not_found() -> None:
 # Soporte de tests: conversation_id None crea una conversación con el id del IdGenerator · Art. 3
 async def test_handle_message__no_conversation_id__creates_new_conversation() -> None:
     """Sin conversation_id se crea una conversación nueva y se guarda con su historial."""
-    use_case, llm, repo, _ = _build([_final("Hola, ¿en qué te ayudo?")], _banking())
+    # La cliente queda verificada en el propio turno (RN-007-39): el guion pide
+    # `buscar_cliente` y `verificar_identidad` antes de la respuesta final.
+    search = CustomerSearch((CustomerMatch("C-0001", (CardRef("CARD-L1", "**** 4321"),)),), False)
+    banking = (
+        _banking()
+        .respond("search_customer", search)
+        .respond("verify_identity", VerificationResult(True, 3, False))
+    )
+    use_case, llm, repo, _ = _build(
+        [
+            _tools(
+                _call("c1", "buscar_cliente", document="D-1001"),
+                _call("c2", "verificar_identidad", **_VERIFY_ARGS),
+            ),
+            _final("Hola, ¿en qué te ayudo?"),
+        ],
+        banking,
+    )
 
     result = await use_case.handle(None, "hola")
 
@@ -856,19 +879,19 @@ async def test_handle_message__no_conversation_id__creates_new_conversation() ->
     assert result.outcomes == ()
     saved = repo.get("conv-0001")
     assert saved is not None
-    assert saved.history == [
-        ChatMessage("user", text="hola"),
-        ChatMessage("assistant", text="Hola, ¿en qué te ayudo?"),
-    ]
+    assert saved.verified_customer_id == "C-0001"
+    assert saved.history[0] == ChatMessage("user", text="hola")
+    assert saved.history[-1] == ChatMessage("assistant", text="Hola, ¿en qué te ayudo?")
     assert llm.requests[0].messages == (ChatMessage("user", text="hola"),)
 
 
 # Soporte de tests: el historial guardado se envía al LLM en el turno siguiente · Art. 3
 async def test_handle_message__second_turn__sends_saved_history_to_llm() -> None:
     """La conversación se guarda con el historial y el siguiente turno lo reenvía."""
-    use_case, llm, repo, _ = _build([_final("Primera."), _final("Segunda.")], _banking())
+    conv = _verified_conv()
+    use_case, llm, repo, _ = _build([_final("Primera."), _final("Segunda.")], _banking(), conv)
 
-    first = await use_case.handle(None, "uno")
+    first = await use_case.handle(conv.conversation_id, "uno")
     await use_case.handle(first.conversation_id, "dos")
 
     assert llm.requests[1].messages == (
@@ -892,7 +915,7 @@ async def test_handle_message__evaluate_unlisted_transaction__not_listed(verifie
         conv = _located_conv()
         conv.remember_transactions([_tx("TX-L1")])
     banking = _banking()
-    use_case, llm, _, _ = _build(
+    use_case, llm, _, audit = _build(
         [_tools(_call("c1", "evaluar_disputa", transaction_id="TX-L1")), _final("Revisemos.")],
         banking,
         conv,
@@ -901,8 +924,14 @@ async def test_handle_message__evaluate_unlisted_transaction__not_listed(verifie
     result = await use_case.handle(conv.conversation_id, "No reconozco TX-L1")
 
     [(content, is_error)] = _last_results(llm)
-    assert not is_error
-    assert json.loads(content)["result"] == "transaction_not_listed"
+    if verified:
+        assert not is_error
+        assert json.loads(content)["result"] == "transaction_not_listed"
+    else:
+        # RN-007-01 (0.3.0): sin verificación la guarda bloquea y audita `tool_blocked`.
+        assert is_error
+        assert json.loads(content)["error"] == "blocked"
+        assert _blocked_events(audit) == [("evaluar_disputa", "RN-007-01")]
     assert banking.calls == []
     assert result.outcomes == ()
     assert conv.decisions == {}

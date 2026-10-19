@@ -1,5 +1,6 @@
 """Textos fijos en español de spec §5 y §7.3 (RN-007-25)."""
 
+from dispute_agent.domain.identification import IdentificationReply
 from dispute_agent.domain.models.outcome import OutcomeKind
 
 _ESCALATED_NEXT_STEPS_TX = "Un analista revisará tu caso y te contactará."
@@ -68,6 +69,47 @@ OUTCOME_NEXT_STEPS: dict[OutcomeKind, str] = {
     OutcomeKind.ITERATION_LIMIT: ESCALATED_NO_TX_NEXT_STEPS,
     OutcomeKind.LLM_FAILURE: ESCALATED_NO_TX_NEXT_STEPS,
     OutcomeKind.ESCALATION_FAILED: "Por favor, vuelve a contactar al banco más tarde.",
+}
+
+IDENTIFICATION_REPLIES: dict[IdentificationReply, str] = {
+    IdentificationReply.REMINDER_LOCATE: (
+        "Antes de ayudarte necesito identificarte. Indícame tu número de documento, "
+        "tu nombre completo o los últimos 4 dígitos de tu tarjeta."
+    ),
+    IdentificationReply.REMINDER_VERIFY: (
+        "Antes de ayudarte necesito confirmar tu identidad. Indícame tu fecha de "
+        "nacimiento y la fecha de expedición de tu documento."
+    ),
+    IdentificationReply.ASK_DATES: (
+        "Gracias. Para confirmar tu identidad, indícame tu fecha de nacimiento y la "
+        "fecha de expedición de tu documento."
+    ),
+    IdentificationReply.ASK_MORE_DATA: (
+        "Necesito un dato adicional para identificarte. Indícame tu número de "
+        "documento o los últimos 4 dígitos de tu tarjeta."
+    ),
+    IdentificationReply.NOT_FOUND: (
+        "No pudimos identificarte con esos datos. Revísalos e intenta con otro dato: "
+        "tu número de documento, tu nombre completo o los últimos 4 dígitos de tu "
+        "tarjeta."
+    ),
+    IdentificationReply.WRONG_DATES_2: (
+        "Los datos no coinciden con los registrados. Te quedan 2 intentos. Indícame "
+        "de nuevo tu fecha de nacimiento y la fecha de expedición de tu documento."
+    ),
+    IdentificationReply.WRONG_DATES_1: (
+        "Los datos no coinciden con los registrados. Te queda 1 intento. Indícame "
+        "de nuevo tu fecha de nacimiento y la fecha de expedición de tu documento."
+    ),
+    IdentificationReply.INVALID_DATES: (
+        "Las fechas no son válidas. Indícame tu fecha de nacimiento y la fecha de "
+        "expedición de tu documento con el formato AAAA-MM-DD."
+    ),
+    IdentificationReply.CLOSED_ESCALATED: f"{ESCALATED_NO_TX_REASON} {ESCALATED_NO_TX_NEXT_STEPS}",
+    IdentificationReply.CLOSED_ESCALATION_FAILED: (
+        f"{OUTCOME_REASONS[OutcomeKind.ESCALATION_FAILED]} "
+        f"{OUTCOME_NEXT_STEPS[OutcomeKind.ESCALATION_FAILED]}"
+    ),
 }
 
 CONVERSATION_CLOSED_MESSAGE = (

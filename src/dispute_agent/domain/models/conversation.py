@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
+from dispute_agent.domain.identification import IdentificationStep
 from dispute_agent.domain.models.decision import AgentAction, DisputeDecision
 from dispute_agent.domain.models.transaction import DisputedTransaction
 
@@ -40,6 +41,22 @@ class Conversation:
     provided_documents: set[str] = field(default_factory=set)
     card_digits_requested: bool = False
     history: list[object] = field(default_factory=list)
+    turn_identification: IdentificationStep | None = None
+    turn_attempts_remaining: int | None = None
+    turn_blocked_tools: list[str] = field(default_factory=list)
+
+    def begin_turn(self) -> None:
+        """Pone a cero el rastro de identificación del turno (RN-007-41)."""
+        self.turn_identification = None
+        self.turn_attempts_remaining = None
+        self.turn_blocked_tools = []
+
+    def record_identification(
+        self, step: IdentificationStep, attempts_remaining: int | None = None
+    ) -> None:
+        """Conserva solo el último paso de identificación del turno (RN-007-41)."""
+        self.turn_identification = step
+        self.turn_attempts_remaining = attempts_remaining
 
     def mark_verified(self, customer_id: str) -> None:
         self.verified_customer_id = customer_id

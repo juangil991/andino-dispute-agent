@@ -30,6 +30,11 @@ from dispute_agent.application.use_cases.dispute_actions import DisputeActions
 from dispute_agent.application.use_cases.escalation_service import EscalationService
 from dispute_agent.application.use_cases.fraud_actions import FraudActions
 from dispute_agent.domain import messages
+from dispute_agent.domain.identification import (
+    IdentificationReply,
+    IdentificationStep,
+    select_identification_reply,
+)
 from dispute_agent.domain.models.conversation import Conversation, ConversationStatus, KnownCard
 from dispute_agent.domain.models.decision import EscalationReason
 from dispute_agent.domain.models.outcome import Outcome, OutcomeKind
@@ -42,6 +47,8 @@ _DISPUTE_REASONS = frozenset(
     {"UNRECOGNIZED_CHARGE", "DUPLICATE_CHARGE", "INCORRECT_AMOUNT", "NOT_RECEIVED", "OTHER"}
 )
 _UNVERIFIED_RULE = "RN-007-01"
+_UNVERIFIED_TURN_RULE = "RN-007-37"
+_REMINDERS = frozenset({IdentificationReply.REMINDER_LOCATE, IdentificationReply.REMINDER_VERIFY})
 _SEARCH_RULE = "RN-007-02"
 _VERIFY_RULE = "RN-007-03"
 _NO_MATCH_RULE = "RN-007-05"
@@ -194,6 +201,7 @@ class HandleCustomerMessage:
             return TurnDecision(
                 conv, (), messages.CONVERSATION_CLOSED_MESSAGE, drafted=False, closed=True
             )
+        conv.begin_turn()  # RN-007-41: el rastro de identificación es por turno
         conv.history.append(ChatMessage("user", text=message))
         outcomes: list[Outcome] = []
         try:
@@ -216,7 +224,27 @@ class HandleCustomerMessage:
                 outcomes,
                 rule=error.rule if isinstance(error, LLMOutputError) else _LLM_RULE,
             )
+        if drafted and conv.verified_customer_id is None:
+            text = self._identification_reply(conv, outcomes)
+            drafted = False
         return TurnDecision(conv, tuple(outcomes), text, drafted=drafted)
+
+    def _identification_reply(self, conv: Conversation, outcomes: Sequence[Outcome]) -> str:
+        """RN-007-38: sin verificar, el reply es un texto fijo de §7.4 (el del LLM se descarta)."""
+        last_kind = outcomes[-1].kind if outcomes else None
+        reply = select_identification_reply(conv, last_kind)
+        if reply in _REMINDERS:
+            # RN-007-42: solo nombres de herramientas; nunca texto ni argumentos · Art. 8
+            self._audit(
+                conv,
+                "identification_required",
+                tool=None,
+                input={"requested_tools": list(conv.turn_blocked_tools)},
+                output={"reply": reply.value},
+                rule=_UNVERIFIED_TURN_RULE,
+                reason="solicitud rechazada por falta de identificación",
+            )
+        return messages.IDENTIFICATION_REPLIES[reply]
 
     def complete_turn(self, decision: TurnDecision, reply: str) -> ChatTurnResult:
         """Filtra (RN-007-26), registra en el historial, guarda y limpia los `outcomes`."""
@@ -400,7 +428,7 @@ class HandleCustomerMessage:
             except (BankingToolError, BankingToolUnavailableError) as error:
                 return await self._read_failure(conv, call, error, outcomes)
         if isinstance(args, _EvaluateArgs):
-            return await self._evaluate_dispute(conv, call.id, args, outcomes)
+            return await self._evaluate_dispute(conv, call, args, outcomes)
         if isinstance(args, _FraudArgs):
             return await self._report_fraud(conv, call.id, args, outcomes)
         return _error(call.id, "not_available", "Herramienta no disponible.")
@@ -427,6 +455,8 @@ class HandleCustomerMessage:
         return self._blocked(conv, call, rule, message)
 
     def _blocked(self, conv: Conversation, call: ToolCall, rule: str, message: str) -> ToolResult:
+        # RN-007-37: rastro de herramientas bloqueadas del turno · Art. 7
+        conv.turn_blocked_tools.append(call.name)
         self._audit(
             conv,
             "tool_blocked",
@@ -539,7 +569,15 @@ class HandleCustomerMessage:
         )
         matches = len(found.customers)
         conv.record_search(matches, found.refinement_required)
-        if matches == 1 and not found.refinement_required:
+        located = matches == 1 and not found.refinement_required
+        if located:
+            step = IdentificationStep.LOCATED
+        elif matches == 0 and not found.refinement_required:
+            step = IdentificationStep.NOT_FOUND
+        else:
+            step = IdentificationStep.MORE_DATA_NEEDED
+        conv.record_identification(step)  # RN-007-41: rastro del turno para el texto fijo
+        if located:
             match = found.customers[0]
             conv.located_customer_id = match.customer_id
             conv.known_cards = tuple(
@@ -584,16 +622,26 @@ class HandleCustomerMessage:
             birth_date = date.fromisoformat(args.birth_date)
             issue_date = date.fromisoformat(args.document_issue_date)
         except ValueError:
+            # RN-007-40: sin llamar al core ni gastar intento
+            conv.record_identification(IdentificationStep.INVALID_DATES)
             return _error(call_id, "invalid_date", "Las fechas deben tener formato AAAA-MM-DD.")
-        result = await self._banking.verify_identity(
-            conv.conversation_id, customer_id, birth_date, issue_date
-        )
+        try:
+            result = await self._banking.verify_identity(
+                conv.conversation_id, customer_id, birth_date, issue_date
+            )
+        except BankingToolError as error:
+            if error.code != "INVALID_INPUT":
+                raise
+            # RN-007-40: el core rechazó las fechas; se pide de nuevo sin derivar
+            conv.record_identification(IdentificationStep.INVALID_DATES)
+            return _error(call_id, "invalid_date", "Las fechas deben tener formato AAAA-MM-DD.")
         payload: dict[str, object]
         if result.verified:
             conv.mark_verified(customer_id)
             payload = {"verified": True, "cards": [f"**** {c.last4}" for c in conv.known_cards]}
         else:
             payload = {"verified": False, "attempts_remaining": result.attempts_remaining}
+            conv.record_identification(IdentificationStep.WRONG_DATES, result.attempts_remaining)
         self._audit_call(
             conv,
             "verificar_identidad",
@@ -682,9 +730,18 @@ class HandleCustomerMessage:
     # -- Intenciones --------------------------------------------------------------------------
 
     async def _evaluate_dispute(
-        self, conv: Conversation, call_id: str, args: _EvaluateArgs, outcomes: list[Outcome]
+        self, conv: Conversation, call: ToolCall, args: _EvaluateArgs, outcomes: list[Outcome]
     ) -> ToolResult:
-        if conv.verified_customer_id is None or args.transaction_id not in conv.seen_transactions:
+        call_id = call.id
+        if conv.verified_customer_id is None:
+            # RN-007-01, RN-007-37: sin verificación no se evalúa nada · Art. 7
+            return self._blocked(
+                conv,
+                call,
+                _UNVERIFIED_RULE,
+                "Primero debe verificarse la identidad del cliente con verificar_identidad.",
+            )
+        if args.transaction_id not in conv.seen_transactions:
             return _ok(
                 call_id,
                 {
