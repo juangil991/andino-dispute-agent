@@ -105,12 +105,26 @@ IDENTIFICATION_REPLIES: dict[IdentificationReply, str] = {
         "Las fechas no son válidas. Indícame tu fecha de nacimiento y la fecha de "
         "expedición de tu documento con el formato AAAA-MM-DD."
     ),
+    IdentificationReply.INVALID_SEARCH: (
+        "Esos datos no son válidos. Revísalos e indícame tu número de documento, "
+        "tu nombre completo o los últimos 4 dígitos de tu tarjeta."
+    ),
     IdentificationReply.CLOSED_ESCALATED: f"{ESCALATED_NO_TX_REASON} {ESCALATED_NO_TX_NEXT_STEPS}",
     IdentificationReply.CLOSED_ESCALATION_FAILED: (
         f"{OUTCOME_REASONS[OutcomeKind.ESCALATION_FAILED]} "
         f"{OUTCOME_NEXT_STEPS[OutcomeKind.ESCALATION_FAILED]}"
     ),
 }
+
+
+def invalid_input_message(tool: str, field: str | None) -> str:
+    """Texto fijo de RN-010-02: sin texto del servidor ni valores enviados."""
+    where = f" (campo: {field})" if field else ""
+    return (
+        f"Los datos enviados a {tool} no son válidos{where}. Corrígelos y vuelve a llamar "
+        "a la herramienta; si no puedes formarlos con lo que dijo la cliente, pídeselos."
+    )
+
 
 CONVERSATION_CLOSED_MESSAGE = (
     "Tu caso ya fue derivado a un analista. Una persona continuará la atención."

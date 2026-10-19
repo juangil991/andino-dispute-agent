@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 from tests.fakes.agent_transaction_builder import DisputedTransactionBuilder
+from tests.fakes.banking_errors import invalid_input
 from tests.fakes.conversation_builder import ConversationBuilder
 from tests.fakes.fake_agent_audit_log import FakeAgentAuditLog
 from tests.fakes.fake_banking_tools import FakeBankingTools
@@ -324,6 +325,32 @@ async def test_ac_007_23_fraud_actions__block_failure(error: Exception) -> None:
     assert any(
         e.event_type == "conversation_closed" and e.rule == "RN-007-21" for e in audit.events
     )
+
+
+# Regla: RN-010-08 — la derivación por falla deja rastro de herramienta, código y campo.
+# RN-010-09 — INVALID_INPUT de bloquear_tarjeta sigue derivando por falla del sistema.
+# AC-010-10 · AC-010-11 · Art. 8
+async def test_ac_010_10_block_card__invalid_input_with_field__audits_field_and_still_escalates() -> (  # noqa: E501
+    None
+):
+    """AC-010-10 y AC-010-11 (fila de bloquear_tarjeta): audita el campo y deriva."""
+    banking = _banking().respond("block_card", invalid_input("card_id"))
+    actions, conv, audit = _setup(banking, (_tx(),))
+
+    await actions.report(conv, None, ["TX-L1"])
+
+    assert _names(banking) == ["block_card", "escalate"]
+    call = next(e for e in audit.events if e.event_type == "tool_call")
+    assert call.tool == "bloquear_tarjeta"
+    assert call.rule == "RN-007-21"
+    assert call.output == {"error": "INVALID_INPUT", "field": "card_id"}
+    escalation = _calls(banking, "escalate")[0]
+    assert escalation["reason"] is EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE
+    assert escalation["card_id"] == "CARD-L1"
+    assert "(INVALID_INPUT, campo: card_id)" in str(escalation["note"])
+    closed = next(e for e in audit.events if e.event_type == "conversation_closed")
+    assert closed.reason is not None and "(INVALID_INPUT, campo: card_id)" in closed.reason
+    assert conv.status is ConversationStatus.ESCALATED
 
 
 # Soporte de tests: una tarjeta se bloquea una sola vez por conversación · Art. 3

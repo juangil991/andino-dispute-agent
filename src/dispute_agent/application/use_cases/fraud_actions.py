@@ -4,6 +4,7 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from dispute_agent.application.failure_detail import describe_failure
 from dispute_agent.application.ports.audit_log import AgentAuditEvent, AuditEventType, AuditLogPort
 from dispute_agent.application.ports.banking_tools import (
     BankingToolError,
@@ -162,17 +163,18 @@ class FraudActions:
                 conv.conversation_id, card_id, _FRAUD_REASON, _block_key(card_id)
             )
         except BankingToolError as error:
-            self._audit_call(conv, card_id, error.code)
             if error.code != _CARD_NOT_BLOCKABLE:
-                await self._fail(conv, card_id, error.code, outcomes)
+                self._audit_failure(conv, card_id, error.code, error.field)
+                await self._fail(conv, card_id, error.code, outcomes, error.field)
                 return True
+            self._audit_call(conv, card_id, error.code)
             blocked[card_id] = False
             outcomes.append(
                 self._outcome(OutcomeKind.CARD_NOT_BLOCKABLE, _NOT_BLOCKABLE_RULE, masked_card)
             )
             return False
         except BankingToolUnavailableError:
-            self._audit_call(conv, card_id, _UNAVAILABLE_CODE)
+            self._audit_failure(conv, card_id, _UNAVAILABLE_CODE, None)
             await self._fail(conv, card_id, _UNAVAILABLE_CODE, outcomes)
             return True
 
@@ -188,19 +190,25 @@ class FraudActions:
         return False
 
     async def _fail(
-        self, conv: Conversation, card_id: str, code: str, outcomes: list[Outcome]
+        self,
+        conv: Conversation,
+        card_id: str,
+        code: str,
+        outcomes: list[Outcome],
+        field: str | None = None,
     ) -> None:
         """RN-007-21: falla de bloquear_tarjeta; deriva sin CARD_BLOCKED y cierra."""
+        detail = describe_failure(_BLOCK_TOOL, code, field)
         outcomes.append(
             await self._escalation.escalate(
                 conv,
                 reason=EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE,
                 rule=_FAILURE_RULE,
-                note=f"{_FAILURE_RULE}: falla irrecuperable en {_BLOCK_TOOL} ({code})",
+                note=f"{_FAILURE_RULE}: {detail}",
                 card_id=card_id,
             )
         )
-        self._close(conv, _FAILURE_RULE, f"falla irrecuperable en {_BLOCK_TOOL} ({code})")
+        self._close(conv, _FAILURE_RULE, detail)
 
     async def _unverified(self, conv: Conversation, human_note: str | None) -> FraudReportResult:
         """RN-007-17: sin identidad verificada no se bloquea; deriva limitado y cierra."""
@@ -237,6 +245,22 @@ class FraudActions:
             output={"status": conv.status.value},
             rule=rule,
             reason=reason,
+        )
+
+    def _audit_failure(
+        self, conv: Conversation, card_id: str, code: str, field: str | None
+    ) -> None:
+        """RN-010-08: rastro de la falla con herramienta, código y, si lo hay, el campo."""
+        output: dict[str, object] = {"error": code}
+        if field is not None:
+            output["field"] = field
+        self._audit(
+            conv,
+            "tool_call",
+            input={"card_id": card_id, "reason": _FRAUD_REASON},
+            output=output,
+            rule=_FAILURE_RULE,
+            reason=code,
         )
 
     def _audit_call(self, conv: Conversation, card_id: str, result: str) -> None:

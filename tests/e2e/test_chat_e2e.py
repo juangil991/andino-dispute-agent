@@ -1,10 +1,12 @@
 """E2E del agente de disputas: chat -> agente -> MCP stdio real -> SQLite temporal (spec 007)."""
 
+import json
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -192,3 +194,92 @@ def test_ac_007_34_chat_e2e__identify_verify_and_dispute__dispute_and_escalation
         serialized = str(body["reply"]) + str(body["outcomes"])
         assert _PAN not in serialized
         assert _DOCUMENT not in serialized
+
+
+def _script_future_date_to(today: date) -> list[LLMResponse]:
+    """Verificación y luego una consulta con `date_to` futuro y otra con fechas válidas."""
+    verification = _script(today)[:4]
+    return [
+        *verification,
+        _tools(
+            _call(
+                "c3",
+                "consultar_transacciones",
+                card_last4="4321",
+                date_from=(today - timedelta(days=30)).isoformat(),
+                date_to="2099-01-01",
+            )
+        ),
+        _tools(
+            _call(
+                "c4",
+                "consultar_transacciones",
+                card_last4="4321",
+                date_from=(today - timedelta(days=30)).isoformat(),
+                date_to=today.isoformat(),
+            )
+        ),
+        LLMResponse(text="Veo dos cobros recientes en tu tarjeta."),
+    ]
+
+
+# Regla: RN-010-01 — un INVALID_INPUT de `consultar_transacciones` se devuelve al LLM para corregir.
+# Regla: RN-010-07 — cada rechazo corregible queda auditado como `tool_call` con el campo.
+# AC-010-12 · Art. 8 (auditoría) · Art. 10 (no derivar sin necesidad)
+def test_ac_010_12_chat__future_date_to_with_real_server__llm_corrects_and_conversation_stays_active(  # noqa: E501
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC-010-12: `date_to` futuro rechazado por el servidor real; el LLM corrige y sigue ACTIVE."""
+    url = f"sqlite:///{(tmp_path / 'core.db').as_posix()}"
+    _prepare_database(url)
+    settings = AgentSettings(
+        core_database_url=url,
+        core_seed_on_start=False,
+        mcp_call_timeout_seconds=20,
+        _env_file=None,  # type: ignore[call-arg]
+    )
+    llm = FakeLLM(_script_future_date_to(date.today()))
+    messages = [
+        f"Mi documento es {_DOCUMENT}",
+        "Nací el 14 de marzo de 1985 y mi documento se expidió el 2 de abril de 2005",
+        "Quiero revisar un cobro de mi tarjeta",
+    ]
+
+    bodies: list[dict[str, Any]] = []
+    with TestClient(create_app(settings, llm=llm)) as client:
+        conversation_id: str | None = None
+        for text in messages:
+            payload: dict[str, Any] = {"message": text}
+            if conversation_id is not None:
+                payload["conversation_id"] = conversation_id
+            response = client.post("/api/chat", json=payload)
+            assert response.status_code == 200, response.text
+            bodies.append(response.json())
+            conversation_id = bodies[-1]["conversation_id"]
+
+    last = bodies[-1]
+    assert last["status"] == "ACTIVE"
+    assert last["outcomes"] == []
+    assert last["reply"] == "Veo dos cobros recientes en tu tarjeta."
+    _, escalations = _read_core(url)
+    assert escalations == []
+
+    audit_records = [
+        json.loads(line) for line in capsys.readouterr().err.splitlines() if line.startswith("{")
+    ]
+    rejected = [
+        r
+        for r in audit_records
+        if r.get("event_type") == "tool_call" and r.get("rule") == "RN-010-01"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0]["tool"] == "consultar_transacciones"
+    assert rejected[0]["conversation_id"] == conversation_id
+    assert rejected[0]["output"] == {
+        "error": "INVALID_INPUT",
+        "field": "date_to",
+        "correction": 1,
+        "of": 2,
+    }
+    assert not [r for r in audit_records if r.get("event_type") == "escalation"]

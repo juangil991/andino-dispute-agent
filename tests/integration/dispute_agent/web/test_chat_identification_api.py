@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi.testclient import TestClient
+from tests.fakes.banking_errors import invalid_input
 from tests.fakes.fake_banking_tools import FakeBankingTools
 from tests.fakes.fake_llm import FakeLLM, StreamScript, end_turn_response, tool_use_response
 from tests.fakes.fixed_agent_clock import FixedAgentClock
@@ -26,6 +27,10 @@ from dispute_agent.main import create_app
 
 _NOW = datetime(2026, 10, 18, 15, 0, tzinfo=UTC)
 _LOCATE = IDENTIFICATION_REPLIES[IdentificationReply.REMINDER_LOCATE]
+_INVALID_SEARCH_TEXT = (
+    "Esos datos no son válidos. Revísalos e indícame tu número de documento, "
+    "tu nombre completo o los últimos 4 dígitos de tu tarjeta."
+)
 
 
 def _client(
@@ -97,6 +102,29 @@ def test_ac_007_57_chat_stream_api__unverified_turn__start_and_end_without_words
     assert events[1][1]["reply"] == _LOCATE
     assert events[1][1]["status"] == "ACTIVE"
     assert llm.stream_requests == []
+
+
+# Regla: RN-010-06 — si `buscar_cliente` responde INVALID_INPUT y la cliente sigue sin verificar,
+# el `reply` es el texto fijo INVALID_SEARCH de §7.4 (no el del LLM ni NOT_FOUND).
+# AC-010-08 · Art. 7
+def test_ac_010_08_post_chat__search_invalid_input_unverified__replies_invalid_search_text() -> (
+    None
+):
+    """AC-010-08: `POST /api/chat` con INVALID_INPUT en la búsqueda devuelve INVALID_SEARCH."""
+    banking = FakeBankingTools().respond("search_customer", invalid_input("document"))
+    llm = FakeLLM(
+        [
+            tool_use_response(ToolCall("s1", "buscar_cliente", {"document": "???"})),
+            end_turn_response("Texto del LLM que no debe llegar."),
+        ]
+    )
+    with _client(llm, banking) as client:
+        response = client.post("/api/chat", json={"message": "mi documento es ???"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ACTIVE"
+    assert body["reply"] == _INVALID_SEARCH_TEXT
+    assert body["outcomes"] == []
 
 
 # Regla: RN-007-43 — la identificación vive en la conversación: una conversación nueva no la hereda.

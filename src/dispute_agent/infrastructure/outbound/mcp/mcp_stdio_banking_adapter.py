@@ -38,6 +38,7 @@ M = TypeVar("M", bound=BaseModel)
 
 _MAX_ATTEMPTS = 2  # una llamada y, como máximo, un reintento si retryable=true
 _ALREADY_OPEN_ID = re.compile(r":\s*(\S+?)\.?\s*$")
+_INVALID_FIELD = re.compile(r"\(campo:\s*([^)\s]+)\)")
 
 
 class McpStdioBankingAdapter:
@@ -149,8 +150,16 @@ class McpStdioBankingAdapter:
         if envelope.code == "DISPUTE_ALREADY_OPEN":
             match = _ALREADY_OPEN_ID.search(envelope.message)
             existing = match.group(1) if match else None
+        field: str | None = None
+        if envelope.code == "INVALID_INPUT":
+            field_match = _INVALID_FIELD.search(envelope.message)
+            field = field_match.group(1) if field_match else None
         return BankingToolError(
-            envelope.code, envelope.message, envelope.retryable, existing_dispute_id=existing
+            envelope.code,
+            envelope.message,
+            envelope.retryable,
+            existing_dispute_id=existing,
+            field=field,
         )
 
     # --- BankingToolsPort -------------------------------------------------------------------

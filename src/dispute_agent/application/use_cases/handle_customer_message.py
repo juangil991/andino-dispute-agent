@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 
 from dispute_agent.application.agent_tools import LLM_TOOLS, WRITE_TOOLS
+from dispute_agent.application.failure_detail import describe_failure
 from dispute_agent.application.loop_control import LoopStep, LoopVerdict, classify_llm_response
 from dispute_agent.application.ports.audit_log import AgentAuditEvent, AuditEventType, AuditLogPort
 from dispute_agent.application.ports.banking_tools import (
@@ -64,6 +65,9 @@ _CARD_RULE = "RN-007-15"
 _FAILURE_RULE = "RN-007-21"
 _LLM_RULE = "RN-007-23"
 _UNAVAILABLE_CODE = "UNAVAILABLE"
+_INVALID_INPUT_RULE = "RN-010-01"
+_MAX_CORRECTIONS = 2  # RN-010-03
+_CAP_RULE = "RN-010-04"
 # Motivo fijo por regla para el evento `llm_response` (RN-007-36); nunca incluye texto del LLM.
 _LLM_RESPONSE_REASONS = {
     "RN-007-32": "la razón de parada del LLM decide si continuar o responder",
@@ -427,6 +431,12 @@ class HandleCustomerMessage:
             try:
                 return await self._read(conv, call, args, outcomes)
             except (BankingToolError, BankingToolUnavailableError) as error:
+                if (
+                    isinstance(args, (_ListArgs, _SearchArgs))
+                    and isinstance(error, BankingToolError)
+                    and error.code == "INVALID_INPUT"
+                ):
+                    return await self._invalid_input(conv, call, error, outcomes)
                 return await self._read_failure(conv, call, error, outcomes)
         if isinstance(args, _EvaluateArgs):
             return await self._evaluate_dispute(conv, call, args, outcomes)
@@ -484,6 +494,45 @@ class HandleCustomerMessage:
             return await self._search_customer(conv, call.id, args, outcomes)
         return await self._verify_identity(conv, call.id, args, outcomes)
 
+    async def _invalid_input(
+        self,
+        conv: Conversation,
+        call: ToolCall,
+        error: BankingToolError,
+        outcomes: list[Outcome],
+    ) -> ToolResult:
+        """RN-010-01: el rechazo vuelve al LLM para corregir; no deriva ni da nada por hecho."""
+        number = conv.register_invalid_input()
+        if number > _MAX_CORRECTIONS:
+            # RN-010-04: el 3.er rechazo del mensaje no se corrige; deriva y cierra
+            detail = "" if error.field is None else f" (campo: {error.field})"
+            why = f"{call.name} INVALID_INPUT{detail} tras {_MAX_CORRECTIONS} correcciones"
+            return await self._derive_and_close(
+                conv,
+                call,
+                outcomes,
+                EscalationReason.INSUFFICIENT_OR_CONTRADICTORY_INFO,
+                _CAP_RULE,
+                why,
+            )
+        if call.name == "buscar_cliente":
+            conv.record_identification(IdentificationStep.INVALID_SEARCH)  # RN-010-06
+        # RN-010-07: rastro de cada rechazo corregible · Art. 8
+        self._audit_call(
+            conv,
+            call.name,
+            _safe(conv, call.arguments),
+            {
+                "error": "INVALID_INPUT",
+                "field": error.field,
+                "correction": number,
+                "of": _MAX_CORRECTIONS,
+            },
+            _INVALID_INPUT_RULE,
+            "argumentos rechazados por el core; se devuelven al LLM para corregirlos",
+        )
+        return _invalid_input_result(call.id, call.name, error.field, _MAX_CORRECTIONS - number)
+
     async def _read_failure(
         self,
         conv: Conversation,
@@ -493,15 +542,37 @@ class HandleCustomerMessage:
     ) -> ToolResult:
         """RN-007-21: falla de una lectura; deriva, cierra y no filtra el error al LLM."""
         code = error.code if isinstance(error, BankingToolError) else _UNAVAILABLE_CODE
-        why = f"falla irrecuperable en {call.name} ({code})"
-        outcome = await self._escalation.escalate(
+        field = error.field if isinstance(error, BankingToolError) else None
+        why = describe_failure(call.name, code, field)
+        # RN-010-08: rastro de la herramienta y el código antes de derivar · Art. 8
+        failure_output: dict[str, object] = {"error": code}
+        if code == "INVALID_INPUT":
+            failure_output["field"] = field
+        self._audit_call(
             conv,
-            EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE,
+            call.name,
+            {"fields": sorted(call.arguments)},
+            failure_output,
             _FAILURE_RULE,
-            note=f"{_FAILURE_RULE}: {why}",
+            why,
         )
+        return await self._derive_and_close(
+            conv, call, outcomes, EscalationReason.UNRECOVERABLE_SYSTEM_FAILURE, _FAILURE_RULE, why
+        )
+
+    async def _derive_and_close(
+        self,
+        conv: Conversation,
+        call: ToolCall,
+        outcomes: list[Outcome],
+        reason: EscalationReason,
+        rule: str,
+        why: str,
+    ) -> ToolResult:
+        """Deriva, cierra y devuelve al LLM el resultado fijo `system_unavailable` (RN-007-21)."""
+        outcome = await self._escalation.escalate(conv, reason, rule, note=f"{rule}: {why}")
         outcomes.append(outcome)
-        self._close(conv, call.name, _FAILURE_RULE, why)
+        self._close(conv, call.name, rule, why)
         content = json.dumps(
             {
                 "error": "system_unavailable",
@@ -851,6 +922,20 @@ def _ok(call_id: str, payload: Mapping[str, object]) -> ToolResult:
 
 def _error(call_id: str, code: str, message: str) -> ToolResult:
     content = json.dumps({"error": code, "message": message}, ensure_ascii=False)
+    return ToolResult(call_id, content, is_error=True)
+
+
+def _invalid_input_result(call_id: str, tool: str, field: str | None, remaining: int) -> ToolResult:
+    """Resultado de error de validación hacia el LLM (spec 010 §7.2)."""
+    content = json.dumps(
+        {
+            "error": "invalid_input",
+            "field": field,
+            "corrections_remaining": remaining,
+            "message": messages.invalid_input_message(tool, field),
+        },
+        ensure_ascii=False,
+    )
     return ToolResult(call_id, content, is_error=True)
 
 

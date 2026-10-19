@@ -220,6 +220,11 @@ Precedencia: `constitution.md` > `.claude/rules/` > `spec.md` > `plan.md` > `tas
 | Coste extra de una llamada al LLM por mensaje aceptado. | plan 009 §7 |
 | La página exige solo `conversation_id`, `reply` y `status` en `end`/`interrupted`. | RN-009-23 |
 
+### 010 — Corrección de entradas inválidas
+| Decisión | Fuente |
+|---|---|
+| El `INVALID_INPUT` de `consultar_transacciones` y `buscar_cliente` no es una falla: se devuelve al LLM para corregir, con tope de 2 por mensaje; al agotarse se deriva con `INSUFFICIENT_OR_CONTRADICTORY_INFO`. Motivo: incidente ESC-000010 (derivación por un dato mal formado corregible). | spec 010 RN-010-01/03/04 |
+
 ## 10. Riesgos aceptados y transversales
 
 | Decisión | Fuente |

@@ -10,6 +10,7 @@ import pytest
 from mcp.client.session import ClientSession
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import CallToolResult
 from pydantic import BaseModel, ValidationError
 from tests.fakes.customer_builder import CustomerBuilder
 from tests.fakes.failing_customer_repository import FailingCustomerRepository
@@ -57,6 +58,9 @@ from core_banking_mcp.infrastructure.outbound.persistence.sqlalchemy_transaction
 )
 from core_banking_mcp.infrastructure.outbound.verification.in_memory_verification_store import (
     InMemoryConversationVerificationStore,
+)
+from dispute_agent.infrastructure.outbound.mcp.mcp_stdio_banking_adapter import (
+    McpStdioBankingAdapter,
 )
 from dispute_agent.infrastructure.outbound.mcp.response_models import (
     BloquearTarjetaModel,
@@ -291,3 +295,37 @@ async def test_client_contract__error_envelope__is_parsed_by_client_error_model(
 
     with pytest.raises(ValidationError):
         ToolErrorEnvelope.model_validate({**result.structuredContent, "trace": "x"})
+
+
+_INVALID_INPUT_MESSAGES = [
+    ("Los datos de la solicitud no son válidos (campo: card_id).", "card_id"),
+    ("Los datos de verificación no son válidos (campo: birth_date).", "birth_date"),
+    ("Los datos de búsqueda no son válidos (campo: document).", "document"),
+    ("Los datos de la consulta no son válidos (campo: date_to).", "date_to"),
+    ("Los datos de la solicitud no son válidos (campo: reason).", "reason"),
+    ("Los datos de la solicitud no son válidos.", None),
+]
+
+
+# Regla: RN-010-01 — el core señala el campo inválido en el INVALID_INPUT que se devuelve al LLM.
+# AC-010-12 · Art. 3 (contrato cliente/servidor: formato `(campo: X)` del mensaje)
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    _INVALID_INPUT_MESSAGES,
+    ids=["solicitud", "verificacion", "busqueda", "consulta", "solicitud-reason", "sin-campo"],
+)
+def test_ac_010_12_to_tool_error__invalid_input_messages__extracts_field(
+    message: str, expected: str | None
+) -> None:
+    """AC-010-12: el campo de `(campo: X)` llega a BankingToolError.field; sin él, None."""
+    adapter = McpStdioBankingAdapter("python", [], None, 1.0)
+    result = CallToolResult(
+        content=[],
+        structuredContent={"code": "INVALID_INPUT", "message": message, "retryable": False},
+        isError=True,
+    )
+
+    error = adapter._to_tool_error("x", result)
+
+    assert error.code == "INVALID_INPUT"
+    assert error.field == expected

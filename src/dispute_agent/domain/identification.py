@@ -17,6 +17,7 @@ class IdentificationStep(Enum):
     NOT_FOUND = "NOT_FOUND"
     WRONG_DATES = "WRONG_DATES"
     INVALID_DATES = "INVALID_DATES"
+    INVALID_SEARCH = "INVALID_SEARCH"
 
 
 class IdentificationReply(Enum):
@@ -30,6 +31,7 @@ class IdentificationReply(Enum):
     WRONG_DATES_2 = "WRONG_DATES_2"
     WRONG_DATES_1 = "WRONG_DATES_1"
     INVALID_DATES = "INVALID_DATES"
+    INVALID_SEARCH = "INVALID_SEARCH"
     CLOSED_ESCALATED = "CLOSED_ESCALATED"
     CLOSED_ESCALATION_FAILED = "CLOSED_ESCALATION_FAILED"
 
@@ -39,6 +41,7 @@ _STEP_REPLIES: dict[IdentificationStep, IdentificationReply] = {
     IdentificationStep.MORE_DATA_NEEDED: IdentificationReply.ASK_MORE_DATA,
     IdentificationStep.NOT_FOUND: IdentificationReply.NOT_FOUND,
     IdentificationStep.INVALID_DATES: IdentificationReply.INVALID_DATES,
+    IdentificationStep.INVALID_SEARCH: IdentificationReply.INVALID_SEARCH,
 }
 
 
